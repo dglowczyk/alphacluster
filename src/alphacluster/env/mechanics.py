@@ -7,10 +7,10 @@ business logic isolated and easily testable.
 
 from __future__ import annotations
 
-from alphacluster.config import MAKER_FEE, TAKER_FEE
-
+from alphacluster.config import TAKER_FEE
 
 # ── Fee calculation ──────────────────────────────────────────────────────────
+
 
 def calculate_fee(notional_value: float, fee_rate: float | None = None) -> float:
     """Return the trading fee for a given *notional_value*.
@@ -34,6 +34,7 @@ def calculate_fee(notional_value: float, fee_rate: float | None = None) -> float
 
 
 # ── Funding rate ─────────────────────────────────────────────────────────────
+
 
 def calculate_funding(position_value: float, funding_rate: float) -> float:
     """Return the funding payment for a position.
@@ -93,6 +94,7 @@ def calculate_liquidation_price(
 
 
 # ── PnL ──────────────────────────────────────────────────────────────────────
+
 
 def calculate_pnl(
     entry_price: float,

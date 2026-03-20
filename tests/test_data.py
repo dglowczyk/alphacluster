@@ -37,18 +37,18 @@ _FIVE_MIN_MS = 300_000
 def _make_kline_row(open_time_ms: int, close_price: float = 10000.0) -> list:
     """Build a single kline row matching the Binance /fapi/v1/klines format."""
     return [
-        open_time_ms,                      # open_time
-        str(close_price),                   # open
-        str(close_price + 10),              # high
-        str(close_price - 10),              # low
-        str(close_price),                   # close
-        "100.0",                            # volume
-        open_time_ms + _FIVE_MIN_MS - 1,   # close_time
-        "1000000.0",                        # quote_volume
-        150,                                # trades
-        "50.0",                             # taker_buy_base_volume
-        "500000.0",                         # taker_buy_quote_volume
-        "0",                                # ignore
+        open_time_ms,  # open_time
+        str(close_price),  # open
+        str(close_price + 10),  # high
+        str(close_price - 10),  # low
+        str(close_price),  # close
+        "100.0",  # volume
+        open_time_ms + _FIVE_MIN_MS - 1,  # close_time
+        "1000000.0",  # quote_volume
+        150,  # trades
+        "50.0",  # taker_buy_base_volume
+        "500000.0",  # taker_buy_quote_volume
+        "0",  # ignore
     ]
 
 
@@ -253,14 +253,16 @@ class TestStorage:
 
     def test_parquet_round_trip(self, tmp_path: Path):
         """Data survives a save->load cycle without loss."""
-        df = pd.DataFrame({
-            "open_time": pd.date_range("2023-01-01", periods=10, freq="5min", tz="UTC"),
-            "open": range(10),
-            "high": range(10, 20),
-            "low": range(10),
-            "close": range(10),
-            "volume": [100.0] * 10,
-        })
+        df = pd.DataFrame(
+            {
+                "open_time": pd.date_range("2023-01-01", periods=10, freq="5min", tz="UTC"),
+                "open": range(10),
+                "high": range(10, 20),
+                "low": range(10),
+                "close": range(10),
+                "volume": [100.0] * 10,
+            }
+        )
         path = tmp_path / "test.parquet"
         save_to_parquet(df, path)
 
@@ -274,10 +276,12 @@ class TestStorage:
             load_from_parquet(tmp_path / "does_not_exist.parquet")
 
     def test_get_last_timestamp(self, tmp_path: Path):
-        df = pd.DataFrame({
-            "open_time": pd.date_range("2023-01-01", periods=5, freq="5min", tz="UTC"),
-            "close": range(5),
-        })
+        df = pd.DataFrame(
+            {
+                "open_time": pd.date_range("2023-01-01", periods=5, freq="5min", tz="UTC"),
+                "close": range(5),
+            }
+        )
         path = tmp_path / "ts.parquet"
         save_to_parquet(df, path)
 
@@ -289,16 +293,20 @@ class TestStorage:
 
     def test_append_to_parquet(self, tmp_path: Path):
         path = tmp_path / "append.parquet"
-        df1 = pd.DataFrame({
-            "open_time": pd.date_range("2023-01-01", periods=5, freq="5min", tz="UTC"),
-            "close": range(5),
-        })
+        df1 = pd.DataFrame(
+            {
+                "open_time": pd.date_range("2023-01-01", periods=5, freq="5min", tz="UTC"),
+                "close": range(5),
+            }
+        )
         save_to_parquet(df1, path)
 
-        df2 = pd.DataFrame({
-            "open_time": pd.date_range("2023-01-01 00:25", periods=3, freq="5min", tz="UTC"),
-            "close": range(5, 8),
-        })
+        df2 = pd.DataFrame(
+            {
+                "open_time": pd.date_range("2023-01-01 00:25", periods=3, freq="5min", tz="UTC"),
+                "close": range(5, 8),
+            }
+        )
         n_new = append_to_parquet(df2, path, time_col="open_time")
         assert n_new == 3
 
@@ -307,10 +315,12 @@ class TestStorage:
 
     def test_append_deduplicates(self, tmp_path: Path):
         path = tmp_path / "dedup.parquet"
-        df = pd.DataFrame({
-            "open_time": pd.date_range("2023-01-01", periods=5, freq="5min", tz="UTC"),
-            "close": range(5),
-        })
+        df = pd.DataFrame(
+            {
+                "open_time": pd.date_range("2023-01-01", periods=5, freq="5min", tz="UTC"),
+                "close": range(5),
+            }
+        )
         save_to_parquet(df, path)
 
         # Append overlapping data.
@@ -328,14 +338,16 @@ class TestValidator:
     """Tests for kline validation, outlier detection, and gap filling."""
 
     def _make_clean_df(self, n: int = 20) -> pd.DataFrame:
-        return pd.DataFrame({
-            "open_time": pd.date_range("2023-01-01", periods=n, freq="5min", tz="UTC"),
-            "open": [10000.0] * n,
-            "high": [10010.0] * n,
-            "low": [9990.0] * n,
-            "close": [10000.0] * n,
-            "volume": [100.0] * n,
-        })
+        return pd.DataFrame(
+            {
+                "open_time": pd.date_range("2023-01-01", periods=n, freq="5min", tz="UTC"),
+                "open": [10000.0] * n,
+                "high": [10010.0] * n,
+                "low": [9990.0] * n,
+                "close": [10000.0] * n,
+                "volume": [100.0] * n,
+            }
+        )
 
     def test_valid_data_passes(self):
         df = self._make_clean_df()
@@ -417,14 +429,16 @@ class TestLiveFeed:
     """Test DataSource implementations."""
 
     def test_historical_data_source(self, tmp_path: Path):
-        df = pd.DataFrame({
-            "open_time": pd.date_range("2023-01-01", periods=50, freq="5min", tz="UTC"),
-            "open": range(50),
-            "high": range(50),
-            "low": range(50),
-            "close": range(50),
-            "volume": [1.0] * 50,
-        })
+        df = pd.DataFrame(
+            {
+                "open_time": pd.date_range("2023-01-01", periods=50, freq="5min", tz="UTC"),
+                "open": range(50),
+                "high": range(50),
+                "low": range(50),
+                "close": range(50),
+                "volume": [1.0] * 50,
+            }
+        )
         path = tmp_path / "hist.parquet"
         save_to_parquet(df, path)
 

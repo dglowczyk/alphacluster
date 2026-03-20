@@ -35,12 +35,12 @@ class Account:
     # ── State ────────────────────────────────────────────────────────────
     balance: float = field(init=False)
     position_side: str = field(init=False, default="flat")  # "flat" | "long" | "short"
-    position_size: float = field(init=False, default=0.0)   # base-asset units
+    position_size: float = field(init=False, default=0.0)  # base-asset units
     entry_price: float = field(init=False, default=0.0)
     leverage: int = field(init=False, default=1)
     unrealized_pnl: float = field(init=False, default=0.0)
     peak_equity: float = field(init=False)
-    time_in_position: int = field(init=False, default=0)    # candles
+    time_in_position: int = field(init=False, default=0)  # candles
 
     # ── History ──────────────────────────────────────────────────────────
     trade_history: list[dict[str, Any]] = field(init=False, default_factory=list)
@@ -209,9 +209,7 @@ class Account:
         """Return True if the position should be liquidated at *current_price*."""
         if self.position_side == "flat":
             return False
-        liq_price = calculate_liquidation_price(
-            self.entry_price, self.leverage, self.position_side
-        )
+        liq_price = calculate_liquidation_price(self.entry_price, self.leverage, self.position_side)
         if self.position_side == "long":
             return current_price <= liq_price
         else:  # short

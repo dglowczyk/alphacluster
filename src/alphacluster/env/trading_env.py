@@ -20,7 +20,6 @@ from alphacluster.config import (
     N_LEVERAGE_LEVELS,
     N_POSITION_SIZES,
     POSITION_SIZE_OPTIONS,
-    TAKER_FEE,
     WINDOW_SIZE,
 )
 from alphacluster.env.account import Account
@@ -215,7 +214,8 @@ class TradingEnv(gym.Env):
 
         # Drawdown penalty
         drawdown = (self.account.peak_equity - current_equity) / self.account.peak_equity
-        reward -= _DRAWDOWN_PENALTY_COEFF * max(0.0, drawdown) / self.initial_balance * abs(equity_change + 1e-9)
+        dd_penalty = _DRAWDOWN_PENALTY_COEFF * max(0.0, drawdown)
+        reward -= dd_penalty / self.initial_balance * abs(equity_change + 1e-9)
 
         self._prev_equity = current_equity
 
@@ -269,7 +269,7 @@ class TradingEnv(gym.Env):
 
         o = self._open[start:end] / current_close - 1.0
         h = self._high[start:end] / current_close - 1.0
-        l = self._low[start:end] / current_close - 1.0
+        lo = self._low[start:end] / current_close - 1.0
         c = self._close[start:end] / current_close - 1.0
 
         # Volume: normalize by rolling mean over the window
@@ -279,7 +279,7 @@ class TradingEnv(gym.Env):
             vol_mean = 1.0
         v = vol_window / vol_mean - 1.0
 
-        market = np.stack([o, h, l, c, v], axis=-1).astype(np.float32)
+        market = np.stack([o, h, lo, c, v], axis=-1).astype(np.float32)
         return market
 
     def _get_account_obs(self) -> np.ndarray:

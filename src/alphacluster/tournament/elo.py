@@ -112,8 +112,12 @@ class EloRating:
 
         logger.info(
             "ELO update: %s %.1f -> %.1f, %s %.1f -> %.1f",
-            winner, ra, new_ra,
-            loser, rb, new_rb,
+            winner,
+            ra,
+            new_ra,
+            loser,
+            rb,
+            new_rb,
         )
         return new_ra, new_rb
 

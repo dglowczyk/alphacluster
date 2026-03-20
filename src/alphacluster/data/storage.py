@@ -111,13 +111,13 @@ def append_to_parquet(new_df: pd.DataFrame, path: str | Path, time_col: str = "o
     if path.exists():
         existing = load_from_parquet(path)
         combined = pd.concat([existing, new_df], ignore_index=True)
-        combined = combined.drop_duplicates(subset=time_col).sort_values(time_col).reset_index(
-            drop=True
+        combined = (
+            combined.drop_duplicates(subset=time_col).sort_values(time_col).reset_index(drop=True)
         )
         n_new = len(combined) - len(existing)
     else:
-        combined = new_df.drop_duplicates(subset=time_col).sort_values(time_col).reset_index(
-            drop=True
+        combined = (
+            new_df.drop_duplicates(subset=time_col).sort_values(time_col).reset_index(drop=True)
         )
         n_new = len(combined)
 

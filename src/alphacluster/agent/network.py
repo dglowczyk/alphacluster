@@ -12,9 +12,8 @@ from __future__ import annotations
 
 import gymnasium as gym
 import torch
-from torch import nn
-
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+from torch import nn
 
 
 class TradingFeatureExtractor(BaseFeaturesExtractor):

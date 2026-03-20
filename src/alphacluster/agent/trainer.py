@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import (
@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Agent factory
 # ---------------------------------------------------------------------------
+
 
 def create_agent(env: gym.Env, config: TrainingConfig) -> PPO:
     """Instantiate an SB3 PPO agent with the custom feature extractor.
@@ -70,36 +71,142 @@ def create_agent(env: gym.Env, config: TrainingConfig) -> PPO:
 
 
 # ---------------------------------------------------------------------------
-# Tournament callback (stub — actual tournament logic is Phase 5)
+# Tournament callback
 # ---------------------------------------------------------------------------
 
-class TournamentCallback(BaseCallback):
-    """Periodically triggers a tournament evaluation.
 
-    This is a stub: the real tournament logic (ELO rating, champion
-    comparison) will be implemented in Phase 5.  For now it simply logs
-    a message every ``tournament_freq`` timesteps.
+class TournamentCallback(BaseCallback):
+    """Periodically saves the current model as a new generation and runs
+    a tournament against the reigning champion.
+
+    On each trigger the callback:
+    1. Saves the current model as ``gen_<N>`` via the versioning module.
+    2. If no champion exists yet, automatically crowns this generation.
+    3. Otherwise loads the champion, runs a tournament, and promotes the
+       candidate if it wins enough episodes.
+
+    Parameters
+    ----------
+    tournament_freq:
+        Trigger interval in *environment steps* (calls to ``_on_step``).
+    eval_env:
+        A separate TradingEnv used for head-to-head evaluation.
+    config:
+        Training configuration (carries ``tournament_episodes`` and
+        ``promotion_threshold``).
+    base_dir:
+        Root directory for model storage (passed to versioning helpers).
+    verbose:
+        Verbosity level.
     """
 
-    def __init__(self, tournament_freq: int, verbose: int = 0) -> None:
+    def __init__(
+        self,
+        tournament_freq: int,
+        eval_env: Any | None = None,
+        config: TrainingConfig | None = None,
+        base_dir: str | Path | None = None,
+        verbose: int = 0,
+    ) -> None:
         super().__init__(verbose)
         self.tournament_freq = tournament_freq
+        self.eval_env = eval_env
+        self.config = config or TrainingConfig()
+        self.base_dir = base_dir
+        self._generation = 0
 
     def _on_step(self) -> bool:
-        if self.n_calls % self.tournament_freq == 0:
-            msg = (
-                f"Tournament would run here (timestep {self.num_timesteps}). "
-                "Actual tournament logic is in Phase 5."
-            )
+        if self.n_calls % self.tournament_freq != 0:
+            return True
+
+        from alphacluster.tournament.arena import run_tournament
+        from alphacluster.tournament.elo import EloRating
+        from alphacluster.tournament.versioning import (
+            get_champion,
+            load_generation,
+            save_generation,
+            set_champion,
+        )
+
+        gen = self._generation
+        self._generation += 1
+
+        # 1. Save the current model as a new generation
+        agent = self.model  # SB3 agent attached by CallbackList
+        save_generation(
+            model=agent,
+            generation=gen,
+            metadata={"timestep": self.num_timesteps},
+            base_dir=self.base_dir,
+        )
+        logger.info(
+            "Tournament: saved generation %d (timestep %d)",
+            gen,
+            self.num_timesteps,
+        )
+
+        # 2. If no champion yet, crown this generation automatically
+        champ_gen = get_champion(base_dir=self.base_dir)
+        if champ_gen is None:
+            set_champion(gen, base_dir=self.base_dir)
+            msg = f"No champion found -- generation {gen} becomes champion by default."
             logger.info(msg)
             if self.verbose:
                 print(msg)
+            return True
+
+        # 3. Load champion and run tournament
+        if self.eval_env is None:
+            logger.warning("Tournament: no eval_env provided; skipping match.")
+            return True
+
+        try:
+            champion_model, _meta = load_generation(
+                champ_gen,
+                env=self.eval_env,
+                base_dir=self.base_dir,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to load champion gen %d; skipping tournament.",
+                champ_gen,
+            )
+            return True
+
+        elo = EloRating()
+        result = run_tournament(
+            candidate=agent,
+            champion=champion_model,
+            env=self.eval_env,
+            candidate_id=f"gen_{gen}",
+            champion_id=f"gen_{champ_gen}",
+            n_episodes=self.config.tournament_episodes,
+            promotion_threshold=self.config.promotion_threshold,
+            elo=elo,
+        )
+
+        msg = (
+            f"Tournament gen_{gen} vs gen_{champ_gen}: "
+            f"winner={result.winner}, "
+            f"candidate_wins={result.candidate_wins}, "
+            f"promoted={result.candidate_promoted}"
+        )
+        logger.info(msg)
+        if self.verbose:
+            print(msg)
+
+        # 4. Promote if the candidate beat the champion
+        if result.candidate_promoted:
+            set_champion(gen, base_dir=self.base_dir)
+            logger.info("Generation %d promoted to champion.", gen)
+
         return True
 
 
 # ---------------------------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------------------------
+
 
 def train(
     agent: PPO,
@@ -121,7 +228,7 @@ def train(
     checkpoint_dir:
         Directory to save periodic checkpoints.  Defaults to ``models/checkpoints``.
     run_tournament:
-        If True, include the tournament callback stub.
+        If True, include the tournament callback.
 
     Returns
     -------
@@ -161,11 +268,13 @@ def train(
             )
         )
 
-    # ── Tournament callback (stub) ───────────────────────────────────
+    # ── Tournament callback ──────────────────────────────────────────
     if run_tournament:
         callbacks.append(
             TournamentCallback(
                 tournament_freq=config.tournament_freq,
+                eval_env=eval_env,
+                config=config,
                 verbose=1,
             )
         )
@@ -189,6 +298,7 @@ def train(
 # ---------------------------------------------------------------------------
 # Save / Load helpers
 # ---------------------------------------------------------------------------
+
 
 def save_agent(agent: PPO, path: str | Path) -> Path:
     """Save a trained PPO agent to disk.

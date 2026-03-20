@@ -7,8 +7,9 @@ headless environments (CI, SSH, containers).
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import matplotlib
 
@@ -172,7 +173,7 @@ def plot_action_distribution(
     counts = [directions.count(label) for label in labels]
 
     colors = {"long": "green", "short": "red", "flat": "gray"}
-    bar_colors = [colors.get(l, "steelblue") for l in labels]
+    bar_colors = [colors.get(label, "steelblue") for label in labels]
 
     ax.bar(labels, counts, color=bar_colors, edgecolor="black", alpha=0.8)
     ax.set_title("Action Distribution")

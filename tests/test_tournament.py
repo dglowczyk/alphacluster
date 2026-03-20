@@ -30,10 +30,10 @@ from alphacluster.tournament.versioning import (
     set_champion,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_df(
     n_candles: int = 3200,
@@ -43,7 +43,10 @@ def _make_df(
     """Generate a synthetic OHLCV DataFrame for testing."""
     rng = np.random.default_rng(seed)
     timestamps = pd.date_range(
-        start="2025-01-01", periods=n_candles, freq="5min", tz="UTC",
+        start="2025-01-01",
+        periods=n_candles,
+        freq="5min",
+        tz="UTC",
     )
     close = start_price + np.cumsum(rng.normal(0, 10, size=n_candles))
     close = np.maximum(close, 100.0)
@@ -54,14 +57,16 @@ def _make_df(
     opn = np.maximum(opn, 1.0)
     volume = rng.uniform(100, 10_000, size=n_candles)
 
-    return pd.DataFrame({
-        "open_time": timestamps,
-        "open": opn,
-        "high": high,
-        "low": low,
-        "close": close,
-        "volume": volume,
-    })
+    return pd.DataFrame(
+        {
+            "open_time": timestamps,
+            "open": opn,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+        }
+    )
 
 
 def _make_env(n_candles: int = 3200, episode_length: int = 50) -> TradingEnv:
@@ -309,11 +314,15 @@ class TestTournament:
     def test_tournament_returns_result(self):
         env = _make_env()
         candidate = _DummyModel([1, 2, 0])  # active trading
-        champion = _DummyModel([0, 0, 0])   # flat
+        champion = _DummyModel([0, 0, 0])  # flat
         result = run_tournament(
-            candidate, champion, env,
-            candidate_id="gen_1", champion_id="gen_0",
-            n_episodes=3, promotion_threshold=0.5,
+            candidate,
+            champion,
+            env,
+            candidate_id="gen_1",
+            champion_id="gen_0",
+            n_episodes=3,
+            promotion_threshold=0.5,
         )
         assert isinstance(result, TournamentResult)
         assert result.candidate_id == "gen_1"
@@ -325,9 +334,13 @@ class TestTournament:
         candidate = _DummyModel([1, 2, 0])
         champion = _DummyModel([0, 0, 0])
         result = run_tournament(
-            candidate, champion, env,
-            candidate_id="gen_1", champion_id="gen_0",
-            n_episodes=3, promotion_threshold=0.5,
+            candidate,
+            champion,
+            env,
+            candidate_id="gen_1",
+            champion_id="gen_0",
+            n_episodes=3,
+            promotion_threshold=0.5,
             elo=elo,
         )
         # If there was a winner, ELO should have changed
@@ -340,8 +353,11 @@ class TestTournament:
         champion = _DummyModel([0, 0, 0])
         n_ep = 5
         result = run_tournament(
-            candidate, champion, env,
-            n_episodes=n_ep, promotion_threshold=0.5,
+            candidate,
+            champion,
+            env,
+            n_episodes=n_ep,
+            promotion_threshold=0.5,
         )
         total = result.candidate_wins + result.champion_wins + result.draws
         assert total == n_ep
@@ -354,8 +370,11 @@ class TestTournament:
         candidate = _DummyModel([0, 0, 0])
         champion = _DummyModel([0, 0, 0])
         result = run_tournament(
-            candidate, champion, env,
-            n_episodes=3, promotion_threshold=0.0,
+            candidate,
+            champion,
+            env,
+            n_episodes=3,
+            promotion_threshold=0.0,
         )
         assert result.candidate_promoted is True
 
@@ -365,8 +384,11 @@ class TestTournament:
         candidate = _DummyModel([0, 0, 0])
         champion = _DummyModel([0, 0, 0])
         result = run_tournament(
-            candidate, champion, env,
-            n_episodes=3, promotion_threshold=1.1,  # impossible to meet
+            candidate,
+            champion,
+            env,
+            n_episodes=3,
+            promotion_threshold=1.1,  # impossible to meet
         )
         assert result.candidate_promoted is False
 
@@ -379,9 +401,13 @@ class TestTournament:
         total_before = elo.get_rating("gen_0") + elo.get_rating("gen_1")
 
         run_tournament(
-            _DummyModel([1, 2, 0]), _DummyModel([0, 0, 0]), env,
-            candidate_id="gen_1", champion_id="gen_0",
-            n_episodes=3, elo=elo,
+            _DummyModel([1, 2, 0]),
+            _DummyModel([0, 0, 0]),
+            env,
+            candidate_id="gen_1",
+            champion_id="gen_0",
+            n_episodes=3,
+            elo=elo,
         )
 
         total_after = elo.get_rating("gen_0") + elo.get_rating("gen_1")

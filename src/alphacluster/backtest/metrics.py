@@ -141,11 +141,15 @@ def print_report(metrics: dict[str, Any]) -> None:
 
     print(f"\n  Initial Equity:      {metrics.get('initial_equity', 0):>14,.2f}")
     print(f"  Final Equity:        {metrics.get('final_equity', 0):>14,.2f}")
-    print(f"  Total PnL:           {metrics.get('total_pnl', 0):>14,.2f}  ({metrics.get('total_pnl_pct', 0):>+.2f}%)")
+    pnl = metrics.get("total_pnl", 0)
+    pnl_pct = metrics.get("total_pnl_pct", 0)
+    print(f"  Total PnL:           {pnl:>14,.2f}  ({pnl_pct:>+.2f}%)")
 
     print(f"\n  Sharpe Ratio:        {metrics.get('sharpe_ratio', 0):>14.4f}")
     print(f"  Sortino Ratio:       {metrics.get('sortino_ratio', 0):>14.4f}")
-    print(f"  Max Drawdown:        {metrics.get('max_drawdown', 0):>14,.2f}  ({metrics.get('max_drawdown_pct', 0):>+.2f}%)")
+    dd = metrics.get("max_drawdown", 0)
+    dd_pct = metrics.get("max_drawdown_pct", 0)
+    print(f"  Max Drawdown:        {dd:>14,.2f}  ({dd_pct:>+.2f}%)")
 
     print(f"\n  Trade Count:         {metrics.get('trade_count', 0):>14d}")
     print(f"  Win Rate:            {metrics.get('win_rate', 0):>13.2f}%")

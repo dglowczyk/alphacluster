@@ -8,10 +8,7 @@ import pytest
 from gymnasium.utils.env_checker import check_env
 
 from alphacluster.config import (
-    EPISODE_LENGTH,
-    LEVERAGE_OPTIONS,
     MAKER_FEE,
-    POSITION_SIZE_OPTIONS,
     TAKER_FEE,
     WINDOW_SIZE,
 )
@@ -29,12 +26,11 @@ from alphacluster.env.trading_env import TradingEnv
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_df(n_candles: int = 3200, start_price: float = 50_000.0, seed: int = 42) -> pd.DataFrame:
     """Generate a synthetic OHLCV DataFrame for testing."""
     rng = np.random.default_rng(seed)
-    timestamps = pd.date_range(
-        start="2025-01-01", periods=n_candles, freq="5min", tz="UTC"
-    )
+    timestamps = pd.date_range(start="2025-01-01", periods=n_candles, freq="5min", tz="UTC")
     close = start_price + np.cumsum(rng.normal(0, 10, size=n_candles))
     # Ensure all prices are positive
     close = np.maximum(close, 100.0)
@@ -463,7 +459,8 @@ class TestTradingEnv:
                 break
         rewards = np.array(rewards)
         # Rewards normalized by initial balance should be small
-        assert np.abs(rewards).max() < 10.0, f"Max reward magnitude too large: {np.abs(rewards).max()}"
+        max_mag = np.abs(rewards).max()
+        assert max_mag < 10.0, f"Max reward magnitude too large: {max_mag}"
 
     def test_env_registration(self):
         """CryptoPerp-v0 should be registered with Gymnasium."""

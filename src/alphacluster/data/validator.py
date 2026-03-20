@@ -66,12 +66,14 @@ def validate_klines(df: pd.DataFrame, expected_interval: pd.Timedelta = _FIVE_MI
         deltas = times.diff().iloc[1:]
         for idx_offset, delta in deltas.items():
             if delta != expected_interval:
-                gaps.append({
-                    "index": int(idx_offset),
-                    "prev_time": str(times.iloc[idx_offset - 1]),
-                    "next_time": str(times.iloc[idx_offset]),
-                    "delta": str(delta),
-                })
+                gaps.append(
+                    {
+                        "index": int(idx_offset),
+                        "prev_time": str(times.iloc[idx_offset - 1]),
+                        "next_time": str(times.iloc[idx_offset]),
+                        "delta": str(delta),
+                    }
+                )
     result["n_gaps"] = len(gaps)
     result["gaps"] = gaps
     if gaps:
@@ -81,9 +83,7 @@ def validate_klines(df: pd.DataFrame, expected_interval: pd.Timedelta = _FIVE_MI
     return result
 
 
-def detect_outliers(
-    df: pd.DataFrame, pct_threshold: float = _OUTLIER_PCT
-) -> pd.DataFrame:
+def detect_outliers(df: pd.DataFrame, pct_threshold: float = _OUTLIER_PCT) -> pd.DataFrame:
     """Flag candles with extreme price moves.
 
     Parameters
@@ -155,22 +155,28 @@ def fill_gaps(
             last_close = df.loc[i - 1, "close"]
             for j in range(1, n_missing + 1):
                 new_time = prev_time + j * expected_interval
-                new_rows.append({
-                    "open_time": new_time,
-                    "open": last_close,
-                    "high": last_close,
-                    "low": last_close,
-                    "close": last_close,
-                    "volume": 0.0,
-                })
+                new_rows.append(
+                    {
+                        "open_time": new_time,
+                        "open": last_close,
+                        "high": last_close,
+                        "low": last_close,
+                        "close": last_close,
+                        "volume": 0.0,
+                    }
+                )
             logger.info(
                 "Interpolated %d candles for gap at %s (gap=%s)",
-                n_missing, prev_time, gap,
+                n_missing,
+                prev_time,
+                gap,
             )
         else:
             logger.warning(
                 "Large gap at %s -> %s (gap=%s) — not interpolated",
-                prev_time, curr_time, gap,
+                prev_time,
+                curr_time,
+                gap,
             )
 
     if new_rows:

@@ -157,8 +157,14 @@ def download_klines(
 
     # Convert numeric columns.
     float_cols = [
-        "open", "high", "low", "close", "volume",
-        "quote_volume", "taker_buy_base_volume", "taker_buy_quote_volume",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "quote_volume",
+        "taker_buy_base_volume",
+        "taker_buy_quote_volume",
     ]
     for col in float_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -262,14 +268,19 @@ def download_funding_rates(
         return pd.DataFrame(columns=["funding_time", "symbol", "funding_rate", "mark_price"])
 
     df = pd.DataFrame(all_rows)
-    df = df.rename(columns={"fundingTime": "funding_time", "fundingRate": "funding_rate",
-                             "markPrice": "mark_price"})
+    df = df.rename(
+        columns={
+            "fundingTime": "funding_time",
+            "fundingRate": "funding_rate",
+            "markPrice": "mark_price",
+        }
+    )
     df["funding_rate"] = pd.to_numeric(df["funding_rate"], errors="coerce")
     df["mark_price"] = pd.to_numeric(df["mark_price"], errors="coerce")
     df["funding_time"] = pd.to_datetime(df["funding_time"], unit="ms", utc=True)
 
-    df = df.drop_duplicates(subset="funding_time").sort_values("funding_time").reset_index(
-        drop=True
+    df = (
+        df.drop_duplicates(subset="funding_time").sort_values("funding_time").reset_index(drop=True)
     )
 
     logger.info("Downloaded %d funding rate records for %s", len(df), symbol)

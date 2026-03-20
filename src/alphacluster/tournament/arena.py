@@ -135,7 +135,11 @@ def run_match(
 
     logger.info(
         "Match complete: A PnL=%.2f (Sharpe=%.3f), B PnL=%.2f (Sharpe=%.3f) -> %s",
-        a_total_pnl, a_sharpe, b_total_pnl, b_sharpe, winner,
+        a_total_pnl,
+        a_sharpe,
+        b_total_pnl,
+        b_sharpe,
+        winner,
     )
 
     return MatchResult(
@@ -239,14 +243,21 @@ def run_tournament(
     win_rate = candidate_wins / n_episodes if n_episodes > 0 else 0.0
     promoted = win_rate >= promotion_threshold
 
-    overall_winner = candidate_id if result.winner == "model_a" else (
-        champion_id if result.winner == "model_b" else "draw"
+    overall_winner = (
+        candidate_id
+        if result.winner == "model_a"
+        else (champion_id if result.winner == "model_b" else "draw")
     )
 
     logger.info(
         "Tournament: %s vs %s -> winner=%s, candidate_wins=%d/%d (%.1f%%), promoted=%s",
-        candidate_id, champion_id, overall_winner,
-        candidate_wins, n_episodes, win_rate * 100, promoted,
+        candidate_id,
+        champion_id,
+        overall_winner,
+        candidate_wins,
+        n_episodes,
+        win_rate * 100,
+        promoted,
     )
 
     return TournamentResult(

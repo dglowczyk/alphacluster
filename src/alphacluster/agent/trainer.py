@@ -17,6 +17,7 @@ from stable_baselines3.common.callbacks import (
     CheckpointCallback,
     EvalCallback,
 )
+from stable_baselines3.common.monitor import Monitor
 
 from alphacluster.agent.config import TrainingConfig
 from alphacluster.agent.network import TradingFeatureExtractor
@@ -256,6 +257,7 @@ def train(
     if eval_env is not None:
         eval_log_dir = checkpoint_dir / "eval_logs"
         eval_log_dir.mkdir(parents=True, exist_ok=True)
+        eval_env = Monitor(eval_env, filename=str(eval_log_dir / "monitor"))
         callbacks.append(
             EvalCallback(
                 eval_env,
@@ -288,7 +290,7 @@ def train(
     agent.learn(
         total_timesteps=config.total_timesteps,
         callback=CallbackList(callbacks) if callbacks else None,
-        progress_bar=False,
+        progress_bar=True,
     )
     logger.info("Training complete.")
 

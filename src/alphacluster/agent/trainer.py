@@ -363,13 +363,20 @@ def train(
 
     # ── Eval callback ─────────────────────────────────────────────────
     if eval_env is not None:
-        from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+        from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv, VecNormalize
 
         eval_log_dir = checkpoint_dir / "eval_logs"
         eval_log_dir.mkdir(parents=True, exist_ok=True)
-        eval_env = Monitor(eval_env, filename=str(eval_log_dir / "monitor"))
-        eval_env = DummyVecEnv([lambda: eval_env])
-        eval_env = VecNormalize(eval_env, norm_obs=False, norm_reward=False)
+
+        # Wrap raw gym.Env → Monitor → DummyVecEnv
+        if not isinstance(eval_env, VecEnv):
+            eval_env = Monitor(eval_env, filename=str(eval_log_dir / "monitor"))
+            eval_env = DummyVecEnv([lambda: eval_env])
+
+        # Match training env's VecNormalize wrapper (no-op normalization)
+        if not isinstance(eval_env, VecNormalize):
+            eval_env = VecNormalize(eval_env, norm_obs=False, norm_reward=False)
+
         callbacks.append(
             EvalCallback(
                 eval_env,

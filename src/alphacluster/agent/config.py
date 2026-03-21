@@ -17,14 +17,14 @@ class TrainingConfig:
     episode_length: int = 2016  # 1 week of 5-min candles
 
     # ── PPO ───────────────────────────────────────────────────────────────
-    learning_rate: float = 3e-4
+    learning_rate: float = 1e-4
     n_steps: int = 2048
-    batch_size: int = 64
+    batch_size: int = 256
     n_epochs: int = 10
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_range: float = 0.2
-    ent_coef: float = 0.01  # Entropy bonus for exploration
+    ent_coef: float = 0.05  # Entropy bonus for exploration
 
     # ── Training schedule ────────────────────────────────────────────────
     total_timesteps: int = 1_000_000

@@ -28,7 +28,7 @@ from alphacluster.env.account import Account
 # Constants
 # ---------------------------------------------------------------------------
 _FUNDING_HOURS = (0, 8, 16)  # UTC hours at which funding is applied
-_DRAWDOWN_PENALTY_COEFF = 0.5  # coefficient for drawdown penalty in reward
+_DRAWDOWN_PENALTY_COEFF = 0.1  # coefficient for drawdown penalty in reward
 
 
 class TradingEnv(gym.Env):
@@ -156,8 +156,15 @@ class TradingEnv(gym.Env):
         direction_idx, size_idx, leverage_idx = int(action[0]), int(action[1]), int(action[2])
 
         direction = direction_idx  # 0=flat, 1=long, 2=short
-        size_pct = POSITION_SIZE_OPTIONS[size_idx]
-        leverage = LEVERAGE_OPTIONS[leverage_idx]
+
+        # Collapse flat actions: when direction=flat, size and leverage are irrelevant.
+        # This reduces 12 equivalent "flat" actions to a single semantic action.
+        if direction == 0:
+            size_pct = 0.0
+            leverage = 1
+        else:
+            size_pct = POSITION_SIZE_OPTIONS[size_idx]
+            leverage = LEVERAGE_OPTIONS[leverage_idx]
 
         current_price = float(self._close[self._current_idx])
         total_fees = 0.0
@@ -214,10 +221,10 @@ class TradingEnv(gym.Env):
         # Normalize by initial balance
         reward = equity_change / self.initial_balance
 
-        # Drawdown penalty
+        # Drawdown penalty: constant per-step cost proportional to drawdown depth
         drawdown = (self.account.peak_equity - current_equity) / self.account.peak_equity
         dd_penalty = _DRAWDOWN_PENALTY_COEFF * max(0.0, drawdown)
-        reward -= dd_penalty / self.initial_balance * abs(equity_change + 1e-9)
+        reward -= dd_penalty * 0.001
 
         self._prev_equity = current_equity
 

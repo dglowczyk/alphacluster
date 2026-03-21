@@ -5,7 +5,7 @@ The observation is a Dict with:
 - "account": (batch, 7) — normalized account features
 
 The extractor uses a 1D CNN branch for market data and an MLP branch for
-account state, concatenating their outputs into a 160-dim feature vector.
+account state, concatenating their outputs into a 192-dim feature vector.
 """
 
 from __future__ import annotations
@@ -20,18 +20,18 @@ class TradingFeatureExtractor(BaseFeaturesExtractor):
     """CNN backbone for market data + MLP for account state.
 
     Market branch: 1D CNN
-        Conv1d(5, 32, kernel_size=5, stride=2) + ReLU + BatchNorm
+        Conv1d(5, 32, kernel_size=5, stride=1) + ReLU + BatchNorm
         Conv1d(32, 64, kernel_size=5, stride=2) + ReLU + BatchNorm
         Conv1d(64, 128, kernel_size=3, stride=2) + ReLU + BatchNorm
         AdaptiveAvgPool1d(1) -> 128-dim
 
     Account branch: MLP
-        Linear(7, 32) + ReLU
+        Linear(7, 64) + ReLU
 
-    Output: 128 + 32 = 160 dimensional feature vector
+    Output: 128 + 64 = 192 dimensional feature vector
     """
 
-    def __init__(self, observation_space: gym.spaces.Dict, features_dim: int = 160) -> None:
+    def __init__(self, observation_space: gym.spaces.Dict, features_dim: int = 192) -> None:
         # Must call super with the final features_dim
         super().__init__(observation_space, features_dim)
 
@@ -43,7 +43,7 @@ class TradingFeatureExtractor(BaseFeaturesExtractor):
 
         # ── Market branch: 1D CNN ─────────────────────────────────────────
         self.market_cnn = nn.Sequential(
-            nn.Conv1d(n_channels, 32, kernel_size=5, stride=2),
+            nn.Conv1d(n_channels, 32, kernel_size=5, stride=1),
             nn.ReLU(),
             nn.BatchNorm1d(32),
             nn.Conv1d(32, 64, kernel_size=5, stride=2),
@@ -58,10 +58,10 @@ class TradingFeatureExtractor(BaseFeaturesExtractor):
 
         # ── Account branch: MLP ──────────────────────────────────────────
         self.account_mlp = nn.Sequential(
-            nn.Linear(account_dim, 32),
+            nn.Linear(account_dim, 64),
             nn.ReLU(),
         )
-        account_out_dim = 32
+        account_out_dim = 64
 
         assert market_out_dim + account_out_dim == features_dim, (
             f"Expected features_dim={features_dim}, got "

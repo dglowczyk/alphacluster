@@ -50,7 +50,7 @@ def create_agent(env: gym.Env, config: TrainingConfig) -> PPO:
     """
     policy_kwargs = dict(
         features_extractor_class=TradingFeatureExtractor,
-        features_extractor_kwargs=dict(features_dim=160),
+        features_extractor_kwargs=dict(features_dim=192),
     )
 
     agent = PPO(
@@ -343,7 +343,7 @@ def load_agent(path: str | Path, env: gym.Env | None = None) -> PPO:
     custom_objects = {
         "policy_kwargs": dict(
             features_extractor_class=TradingFeatureExtractor,
-            features_extractor_kwargs=dict(features_dim=160),
+            features_extractor_kwargs=dict(features_dim=192),
         )
     }
     agent = PPO.load(str(path), env=env, custom_objects=custom_objects)

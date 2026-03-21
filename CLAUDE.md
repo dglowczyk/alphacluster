@@ -34,6 +34,7 @@ src/alphacluster/
     metrics.py       - Sharpe, Sortino, max drawdown, win rate, profit factor, etc.
     visualizer.py    - Equity curves, trade overlay, action distribution (matplotlib Agg)
 
+notebooks/           - Jupyter notebooks (kaggle_train.ipynb for GPU training on Kaggle)
 scripts/             - Standalone entry points (download_data, train, evaluate)
 tests/               - pytest suite: test_data, test_env, test_tournament (116 tests)
 data/                - Raw and processed OHLCV data (gitignored)

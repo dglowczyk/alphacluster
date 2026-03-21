@@ -39,14 +39,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--learning-rate",
         type=float,
-        default=3e-4,
-        help="Learning rate (default: 3e-4)",
+        default=None,
+        help="Learning rate (default: from TrainingConfig)",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=64,
-        help="Batch size (default: 64)",
+        default=None,
+        help="Batch size (default: from TrainingConfig)",
     )
     parser.add_argument(
         "--symbol",
@@ -143,11 +143,12 @@ def main(argv: list[str] | None = None) -> int:
     train_df, val_df, _test_df = split_data(klines_df)
 
     # ── Build config ─────────────────────────────────────────────────────
-    config = TrainingConfig(
-        total_timesteps=args.timesteps,
-        learning_rate=args.learning_rate,
-        batch_size=args.batch_size,
-    )
+    config_overrides: dict[str, object] = {}
+    if args.learning_rate is not None:
+        config_overrides["learning_rate"] = args.learning_rate
+    if args.batch_size is not None:
+        config_overrides["batch_size"] = args.batch_size
+    config = TrainingConfig(total_timesteps=args.timesteps, **config_overrides)
 
     # ── Create environments ──────────────────────────────────────────────
     print("Creating training environment ...")

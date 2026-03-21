@@ -155,6 +155,28 @@ alphacluster/
 └── models/                    # Trained models and ELO ratings (gitignored)
 ```
 
+## Training on Kaggle (free GPU)
+
+Training locally takes ~5 hours. Kaggle provides free GPU access (Tesla P100/T4) that can reduce this to ~1-2 hours.
+
+### Setup
+
+1. **Upload the repo as a Kaggle Dataset:**
+   - Zip the project directory and upload it as a new Dataset named `alphacluster`
+   - It should contain `src/`, `scripts/`, etc. at the top level
+
+2. **Upload your data as a separate Dataset:**
+   - Create a Dataset named `alphacluster-data`
+   - Upload `btcusdt_5m.parquet` (and optionally `btcusdt_funding.parquet`) from your local `data/` directory
+
+3. **Create a new Kaggle Notebook:**
+   - Import the contents of `notebooks/kaggle_train.ipynb`
+   - Attach both Datasets (`alphacluster` and `alphacluster-data`)
+   - Enable **GPU accelerator** in notebook settings
+   - Enable **Internet** (needed for pip install)
+
+4. **Run all cells.** The trained model will appear in `/kaggle/working/models/` — download it from the Output tab and place it in your local `models/` directory.
+
 ## Stack
 
 - Python 3.10+

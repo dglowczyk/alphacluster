@@ -327,19 +327,37 @@ def save_agent(agent: PPO, path: str | Path) -> Path:
 def load_agent(path: str | Path, env: gym.Env | None = None) -> PPO:
     """Load a trained PPO agent from disk.
 
+    Supports two formats:
+
+    * ``.zip`` — standard SB3 checkpoint (requires matching NumPy version).
+    * ``.pt``  — portable PyTorch state dict (works across NumPy 1.x / 2.x).
+
     Parameters
     ----------
     path:
-        Path to the saved model (with or without ``.zip`` extension).
+        Path to the saved model.
     env:
-        Optional environment to bind to the loaded agent.
+        Environment to bind to the loaded agent (required for ``.pt``).
 
     Returns
     -------
     PPO
         The loaded agent.
     """
+    import torch
+
     path = Path(path)
+
+    if path.suffix == ".pt":
+        if env is None:
+            raise ValueError("An environment is required when loading a .pt state dict.")
+        config = TrainingConfig()
+        agent = create_agent(env, config)
+        state_dict = torch.load(str(path), map_location="cpu", weights_only=True)
+        agent.policy.load_state_dict(state_dict)
+        logger.info("Agent loaded from state dict %s", path)
+        return agent
+
     custom_objects = {
         "policy_kwargs": dict(
             features_extractor_class=TradingFeatureExtractor,
@@ -349,3 +367,5 @@ def load_agent(path: str | Path, env: gym.Env | None = None) -> PPO:
     agent = PPO.load(str(path), env=env, custom_objects=custom_objects)
     logger.info("Agent loaded from %s", path)
     return agent
+
+

@@ -4,6 +4,7 @@
 # Data and model artifacts (top-level only)
 /data/
 /models/
+/reports/
 
 # Environment secrets
 .env

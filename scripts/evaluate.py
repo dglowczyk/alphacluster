@@ -26,6 +26,7 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
+from alphacluster.agent.trainer import load_agent
 from alphacluster.backtest.metrics import calculate_metrics, print_report
 from alphacluster.backtest.runner import run_backtest
 from alphacluster.backtest.visualizer import save_report
@@ -49,6 +50,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Model to evaluate: 'champion' for the current champion, "
             "or an integer generation number (default: champion)"
         ),
+    )
+    parser.add_argument(
+        "--model-path",
+        type=str,
+        default=None,
+        help="Path to a saved model .zip file (overrides --model)",
     )
     parser.add_argument(
         "--symbol",
@@ -140,16 +147,26 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # ── Resolve model ────────────────────────────────────────────────
-    model_type, gen_number = _resolve_model_id(args.model)
+    use_model_path = args.model_path is not None
+    gen_number = None
 
-    if model_type in ("champion", "generation") and gen_number is None:
-        if model_type == "champion":
-            print("No champion has been set yet. Train and run a tournament first.")
-        else:
-            print(f"Could not parse model argument: {args.model}")
-        return 1
+    if not use_model_path:
+        model_type, gen_number = _resolve_model_id(args.model)
 
-    print(f"Loading model: {model_type} (generation {gen_number})")
+        if model_type in ("champion", "generation") and gen_number is None:
+            if model_type == "champion":
+                print("No champion has been set yet. Train and run a tournament first.")
+            else:
+                print(f"Could not parse model argument: {args.model}")
+            return 1
+
+        print(f"Loading model: {model_type} (generation {gen_number})")
+    else:
+        model_path = Path(args.model_path)
+        if not model_path.exists() and not model_path.with_suffix(".zip").exists():
+            print(f"Model file not found: {model_path}")
+            return 1
+        print(f"Loading model from: {model_path}")
 
     # ── Load data ────────────────────────────────────────────────────
     try:
@@ -181,14 +198,21 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # ── Load model ───────────────────────────────────────────────────
-    try:
-        model, metadata = load_generation(gen_number, env=env)
-    except Exception as exc:
-        print(f"Failed to load model generation {gen_number}: {exc}")
-        return 1
+    if use_model_path:
+        try:
+            model = load_agent(args.model_path, env=env)
+        except Exception as exc:
+            print(f"Failed to load model from {args.model_path}: {exc}")
+            return 1
+    else:
+        try:
+            model, metadata = load_generation(gen_number, env=env)
+        except Exception as exc:
+            print(f"Failed to load model generation {gen_number}: {exc}")
+            return 1
 
-    if metadata:
-        print(f"Model metadata: {metadata}")
+        if metadata:
+            print(f"Model metadata: {metadata}")
 
     # ── Run backtest ─────────────────────────────────────────────────
     print(f"\nRunning backtest ({args.episodes} episode(s))...")

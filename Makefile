@@ -2,7 +2,7 @@ VENV := .venv
 PYTHON := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 
-.PHONY: setup download-data train evaluate tournament test lint format clean
+.PHONY: setup download-data train evaluate evaluate-model tournament test lint format clean
 
 setup:
 	python3 -m venv $(VENV)
@@ -17,6 +17,9 @@ train:
 
 evaluate:
 	$(PYTHON) scripts/evaluate.py
+
+evaluate-model:
+	$(PYTHON) scripts/evaluate.py --model-path $(MODEL_PATH)
 
 tournament:
 	$(PYTHON) scripts/train.py --tournament

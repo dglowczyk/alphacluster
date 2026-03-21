@@ -324,7 +324,12 @@ def save_agent(agent: PPO, path: str | Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     agent.save(str(path))
-    logger.info("Agent saved to %s", path)
+
+    import torch
+
+    pt_path = path.with_suffix(".pt")
+    torch.save(agent.policy.state_dict(), str(pt_path))
+    logger.info("Agent saved to %s (.zip + .pt)", path)
     return path
 
 
@@ -361,6 +366,22 @@ def load_agent(path: str | Path, env: gym.Env | None = None) -> PPO:
         agent.policy.load_state_dict(state_dict)
         logger.info("Agent loaded from state dict %s", path)
         return agent
+
+    # Models trained with NumPy 2.x reference ``numpy._core`` in their pickled
+    # data.  When loading on NumPy 1.x the module doesn't exist, causing
+    # ``ModuleNotFoundError``.  Register aliases so cloudpickle can resolve them.
+    import sys
+
+    import numpy.core  # noqa: F811
+
+    for _sub in ("numeric", "multiarray", "_multiarray_umath"):
+        _np2_name = f"numpy._core.{_sub}"
+        if _np2_name not in sys.modules:
+            _np1_mod = getattr(numpy.core, _sub, None)
+            if _np1_mod is not None:
+                sys.modules[_np2_name] = _np1_mod
+    if "numpy._core" not in sys.modules:
+        sys.modules["numpy._core"] = numpy.core
 
     custom_objects = {
         "policy_kwargs": dict(

@@ -56,6 +56,13 @@ def save_generation(
     model_path = gen_dir / "model"
     model.save(str(model_path))
 
+    try:
+        import torch
+
+        torch.save(model.policy.state_dict(), str(gen_dir / "model.pt"))
+    except AttributeError:
+        pass  # test stubs without .policy
+
     meta = metadata or {}
     meta["generation"] = generation
     meta_path = gen_dir / "metadata.json"
@@ -91,7 +98,8 @@ def load_generation(
     bd = _base_dir(base_dir)
     gen_dir = bd / f"gen_{generation}"
 
-    model_path = gen_dir / "model"
+    pt_path = gen_dir / "model.pt"
+    model_path = pt_path if pt_path.exists() else gen_dir / "model"
     model = load_agent(model_path, env=env)
 
     meta_path = gen_dir / "metadata.json"
@@ -188,8 +196,7 @@ def list_generations(base_dir: str | Path | None = None) -> list[dict[str, Any]]
         meta["generation"] = gen_num
 
         # Check if the model file exists
-        model_path = gen_dir / "model.zip"
-        meta["model_exists"] = model_path.exists()
+        meta["model_exists"] = (gen_dir / "model.zip").exists() or (gen_dir / "model.pt").exists()
 
         results.append(meta)
 

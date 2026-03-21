@@ -80,6 +80,13 @@ def _make_env(n_candles: int = 3200, episode_length: int = 50) -> TradingEnv:
     )
 
 
+class _DummyPolicy:
+    """Stub policy with a state_dict method for .pt export."""
+
+    def state_dict(self) -> dict:
+        return {"dummy": "state"}
+
+
 class _DummyModel:
     """Lightweight stub that mimics SB3 model.predict() and model.save().
 
@@ -92,6 +99,7 @@ class _DummyModel:
 
     def __init__(self, action: list[int] | None = None) -> None:
         self.action = np.array(action or [0, 0, 0])
+        self.policy = _DummyPolicy()
 
     def predict(self, obs, deterministic: bool = True):
         return self.action, None
@@ -427,6 +435,7 @@ class TestVersioning:
         gen_dir = save_generation(model, 0, metadata={"elo": 1500}, base_dir=tmp_path)
         assert gen_dir.exists()
         assert (gen_dir / "model.zip").exists()
+        assert (gen_dir / "model.pt").exists()
         assert (gen_dir / "metadata.json").exists()
 
     def test_save_generation_metadata_content(self, tmp_path):
@@ -471,6 +480,17 @@ class TestVersioning:
         assert gens[0]["generation"] == 0
         assert gens[1]["generation"] == 1
         assert gens[2]["generation"] == 2
+
+    def test_list_generations_model_exists_pt_only(self, tmp_path):
+        """model_exists should be True when only .pt file is present."""
+        gen_dir = tmp_path / "gen_0"
+        gen_dir.mkdir()
+        (gen_dir / "metadata.json").write_text('{"generation": 0}')
+        (gen_dir / "model.pt").write_bytes(b"dummy-pt")
+
+        gens = list_generations(base_dir=tmp_path)
+        assert len(gens) == 1
+        assert gens[0]["model_exists"] is True
 
     def test_list_generations_includes_metadata(self, tmp_path):
         model = _DummyModel()

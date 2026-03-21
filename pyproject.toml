@@ -21,6 +21,7 @@ dependencies = [
     "python-dotenv",
     "matplotlib",
     "tqdm",
+    "rich",
 ]
 
 [project.optional-dependencies]

@@ -121,6 +121,52 @@ def run_backtest(
                     }
                     episode_trades.append(trade_record)
 
+        # Force-close any open position at episode end so PnL is realized
+        if env.account.position_side != "flat":
+            last_price = float(env.unwrapped._close[env.unwrapped._current_idx])
+            rpnl, fee = env.account.close_position(last_price)
+
+            # Record the forced close in trade log
+            trade_history = env.account.trade_history
+            while prev_n_trades < len(trade_history):
+                th_entry = trade_history[prev_n_trades]
+                prev_n_trades += 1
+
+                if th_entry["action"] == "close" and open_trade is not None:
+                    trade_record = {
+                        "step": open_trade["open_step"],
+                        "close_step": step,
+                        "action": "round_trip",
+                        "direction": th_entry["side"],
+                        "size": th_entry["size"],
+                        "leverage": open_trade.get("leverage", 1),
+                        "entry_price": th_entry.get("entry_price", open_trade.get("price", 0.0)),
+                        "exit_price": th_entry.get("exit_price", 0.0),
+                        "pnl": th_entry.get("pnl", 0.0),
+                        "fee": open_trade.get("fee", 0.0) + th_entry.get("fee", 0.0),
+                        "balance": env.account.balance,
+                    }
+                    episode_trades.append(trade_record)
+                    open_trade = None
+                elif th_entry["action"] == "close":
+                    trade_record = {
+                        "step": step,
+                        "close_step": step,
+                        "action": "force_close",
+                        "direction": th_entry["side"],
+                        "size": th_entry["size"],
+                        "leverage": 1,
+                        "entry_price": th_entry.get("entry_price", 0.0),
+                        "exit_price": th_entry.get("exit_price", 0.0),
+                        "pnl": th_entry.get("pnl", 0.0),
+                        "fee": th_entry.get("fee", 0.0),
+                        "balance": env.account.balance,
+                    }
+                    episode_trades.append(trade_record)
+
+            # Update equity curve with realized close
+            episode_equity[-1] = env.account.equity
+
         # Episode stats
         initial_balance = env.initial_balance
         final_equity = env.account.equity

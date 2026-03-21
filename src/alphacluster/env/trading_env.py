@@ -86,11 +86,13 @@ class TradingEnv(gym.Env):
         self._funding_map: dict[int, float] = {}
         if funding_df is not None:
             fdf = funding_df.copy()
-            if not pd.api.types.is_datetime64_any_dtype(fdf["time"]):
-                fdf["time"] = pd.to_datetime(fdf["time"], unit="ms", utc=True)
+            # Support both "time" and "funding_time" column names
+            time_col = "funding_time" if "funding_time" in fdf.columns else "time"
+            if not pd.api.types.is_datetime64_any_dtype(fdf[time_col]):
+                fdf[time_col] = pd.to_datetime(fdf[time_col], unit="ms", utc=True)
             # Map: hour-rounded timestamp -> rate
             for _, row in fdf.iterrows():
-                ts = int(pd.Timestamp(row["time"]).timestamp())
+                ts = int(pd.Timestamp(row[time_col]).timestamp())
                 self._funding_map[ts] = float(row["funding_rate"])
 
         # ── Spaces ───────────────────────────────────────────────────────

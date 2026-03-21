@@ -18,6 +18,7 @@ build/
 
 # Testing
 .pytest_cache/
+.ruffle_cache/
 .coverage
 htmlcov/
 

@@ -215,6 +215,7 @@ def train(
     eval_env: gym.Env | None = None,
     checkpoint_dir: str | Path | None = None,
     run_tournament: bool = False,
+    progress_bar: bool = True,
 ) -> PPO:
     """Train the agent with evaluation, checkpointing, and optional tournament hooks.
 
@@ -230,6 +231,9 @@ def train(
         Directory to save periodic checkpoints.  Defaults to ``models/checkpoints``.
     run_tournament:
         If True, include the tournament callback.
+    progress_bar:
+        If True, display a tqdm progress bar during training.  Disable when
+        running under papermill to avoid IOPub timeouts.
 
     Returns
     -------
@@ -290,7 +294,7 @@ def train(
     agent.learn(
         total_timesteps=config.total_timesteps,
         callback=CallbackList(callbacks) if callbacks else None,
-        progress_bar=True,
+        progress_bar=progress_bar,
     )
     logger.info("Training complete.")
 

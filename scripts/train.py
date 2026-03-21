@@ -194,7 +194,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if n_envs > 1:
         from stable_baselines3.common.vec_env import (
-            DummyVecEnv,
             SubprocVecEnv,
             VecNormalize,
         )
@@ -220,8 +219,6 @@ def main(argv: list[str] | None = None) -> int:
             window_size=config.window_size,
             episode_length=config.episode_length,
         )
-        if n_envs > 1:
-            eval_env = DummyVecEnv([lambda: eval_env])
     else:
         print("Validation set too small for evaluation; skipping eval callback.")
 

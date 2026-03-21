@@ -366,6 +366,9 @@ def train(
         eval_log_dir = checkpoint_dir / "eval_logs"
         eval_log_dir.mkdir(parents=True, exist_ok=True)
         eval_env = Monitor(eval_env, filename=str(eval_log_dir / "monitor"))
+        from stable_baselines3.common.vec_env import DummyVecEnv
+
+        eval_env = DummyVecEnv([lambda: eval_env])
         callbacks.append(
             EvalCallback(
                 eval_env,

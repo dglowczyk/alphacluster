@@ -363,12 +363,13 @@ def train(
 
     # ── Eval callback ─────────────────────────────────────────────────
     if eval_env is not None:
+        from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+
         eval_log_dir = checkpoint_dir / "eval_logs"
         eval_log_dir.mkdir(parents=True, exist_ok=True)
         eval_env = Monitor(eval_env, filename=str(eval_log_dir / "monitor"))
-        from stable_baselines3.common.vec_env import DummyVecEnv
-
         eval_env = DummyVecEnv([lambda: eval_env])
+        eval_env = VecNormalize(eval_env, norm_obs=False, norm_reward=False)
         callbacks.append(
             EvalCallback(
                 eval_env,

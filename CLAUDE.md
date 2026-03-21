@@ -111,7 +111,7 @@ make tournament      # Run ELO tournament
 - All paths use `pathlib.Path`
 - Environment variables loaded from `.env` via python-dotenv (optional, never required)
 - Data stored as Parquet files in `data/` directory
-- Models saved as SB3 `.zip` checkpoints in `models/` directory
+- Models saved as PyTorch `.pt` state dicts in `models/` directory
 
 ## Testing Approach
 

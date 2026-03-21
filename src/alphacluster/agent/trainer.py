@@ -419,46 +419,38 @@ def train(
 
 
 def save_agent(agent: PPO, path: str | Path) -> Path:
-    """Save a trained PPO agent to disk.
+    """Save a trained PPO agent to disk as a ``.pt`` state dict.
 
     Parameters
     ----------
     agent:
         The trained agent.
     path:
-        Destination file path (without extension; SB3 adds ``.zip``).
+        Destination file path (extension is forced to ``.pt``).
 
     Returns
     -------
     Path
-        The resolved path (with extension).
+        The resolved ``.pt`` path.
     """
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    agent.save(str(path))
-
     import torch
 
-    pt_path = path.with_suffix(".pt")
-    torch.save(agent.policy.state_dict(), str(pt_path))
-    logger.info("Agent saved to %s (.zip + .pt)", path)
+    path = Path(path).with_suffix(".pt")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(agent.policy.state_dict(), str(path))
+    logger.info("Agent saved to %s", path)
     return path
 
 
 def load_agent(path: str | Path, env: gym.Env | None = None) -> PPO:
-    """Load a trained PPO agent from disk.
-
-    Supports two formats:
-
-    * ``.zip`` — standard SB3 checkpoint (requires matching NumPy version).
-    * ``.pt``  — portable PyTorch state dict (works across NumPy 1.x / 2.x).
+    """Load a trained PPO agent from a ``.pt`` state dict.
 
     Parameters
     ----------
     path:
-        Path to the saved model.
+        Path to the saved ``.pt`` model.
     env:
-        Environment to bind to the loaded agent (required for ``.pt``).
+        Environment to bind to the loaded agent (required).
 
     Returns
     -------
@@ -469,38 +461,11 @@ def load_agent(path: str | Path, env: gym.Env | None = None) -> PPO:
 
     path = Path(path)
 
-    if path.suffix == ".pt":
-        if env is None:
-            raise ValueError("An environment is required when loading a .pt state dict.")
-        config = TrainingConfig()
-        agent = create_agent(env, config)
-        state_dict = torch.load(str(path), map_location="cpu", weights_only=True)
-        agent.policy.load_state_dict(state_dict)
-        logger.info("Agent loaded from state dict %s", path)
-        return agent
-
-    # Models trained with NumPy 2.x reference ``numpy._core`` in their pickled
-    # data.  When loading on NumPy 1.x the module doesn't exist, causing
-    # ``ModuleNotFoundError``.  Register aliases so cloudpickle can resolve them.
-    import sys
-
-    import numpy.core  # noqa: F811
-
-    for _sub in ("numeric", "multiarray", "_multiarray_umath"):
-        _np2_name = f"numpy._core.{_sub}"
-        if _np2_name not in sys.modules:
-            _np1_mod = getattr(numpy.core, _sub, None)
-            if _np1_mod is not None:
-                sys.modules[_np2_name] = _np1_mod
-    if "numpy._core" not in sys.modules:
-        sys.modules["numpy._core"] = numpy.core
-
-    custom_objects = {
-        "policy_kwargs": dict(
-            features_extractor_class=TradingFeatureExtractor,
-            features_extractor_kwargs=dict(features_dim=192),
-        )
-    }
-    agent = PPO.load(str(path), env=env, custom_objects=custom_objects)
+    if env is None:
+        raise ValueError("An environment is required when loading a .pt state dict.")
+    config = TrainingConfig()
+    agent = create_agent(env, config)
+    state_dict = torch.load(str(path), map_location="cpu", weights_only=True)
+    agent.policy.load_state_dict(state_dict)
     logger.info("Agent loaded from %s", path)
     return agent

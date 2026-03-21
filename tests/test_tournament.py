@@ -434,7 +434,6 @@ class TestVersioning:
         model = _DummyModel()
         gen_dir = save_generation(model, 0, metadata={"elo": 1500}, base_dir=tmp_path)
         assert gen_dir.exists()
-        assert (gen_dir / "model.zip").exists()
         assert (gen_dir / "model.pt").exists()
         assert (gen_dir / "metadata.json").exists()
 

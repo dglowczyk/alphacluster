@@ -148,6 +148,13 @@ def _make_env(df, funding_df, config, seed):
     """Factory function for SubprocVecEnv."""
 
     def _init():
+        import os
+        import warnings
+
+        os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+        warnings.filterwarnings("ignore", category=DeprecationWarning)
+        warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
+
         env = TradingEnv(
             df=df,
             funding_df=funding_df,
@@ -186,7 +193,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Creating {n_envs} parallel training environments ...")
 
     if n_envs > 1:
-        from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
+        from stable_baselines3.common.vec_env import (
+            DummyVecEnv,
+            SubprocVecEnv,
+            VecNormalize,
+        )
 
         envs = SubprocVecEnv(
             [_make_env(train_df, funding_df, config, i) for i in range(n_envs)]
@@ -209,6 +220,8 @@ def main(argv: list[str] | None = None) -> int:
             window_size=config.window_size,
             episode_length=config.episode_length,
         )
+        if n_envs > 1:
+            eval_env = DummyVecEnv([lambda: eval_env])
     else:
         print("Validation set too small for evaluation; skipping eval callback.")
 

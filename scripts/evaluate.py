@@ -58,7 +58,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--model-path",
         type=str,
         default=None,
-        help="Path to a saved model .zip file (overrides --model)",
+        help="Path to a saved model .pt file (overrides --model)",
     )
     parser.add_argument(
         "--symbol",
@@ -172,11 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Loading model: {model_type} (generation {gen_number})")
     else:
         model_path = Path(args.model_path)
-        if (
-            not model_path.exists()
-            and not model_path.with_suffix(".zip").exists()
-            and not model_path.with_suffix(".pt").exists()
-        ):
+        if not model_path.exists() and not model_path.with_suffix(".pt").exists():
             print(f"Model file not found: {model_path}")
             return 1
         print(f"Loading model from: {model_path}")

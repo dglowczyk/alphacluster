@@ -206,7 +206,7 @@ Kaggle provides free GPU access (Tesla P100/T4) for faster training.
 - Python 3.10+
 - PyTorch >= 2.0
 - Stable-Baselines3 >= 2.0
-- Gymnasium >= 0.29
+- Gymnasium >= 1.0
 - pandas + pyarrow (Parquet storage)
 - matplotlib (visualization)
 - ruff (linting / formatting)

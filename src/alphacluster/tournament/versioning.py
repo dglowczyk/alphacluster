@@ -31,12 +31,12 @@ def save_generation(
 ) -> Path:
     """Save a model as a numbered generation.
 
-    Creates ``<base_dir>/gen_<N>/model.zip`` and ``<base_dir>/gen_<N>/metadata.json``.
+    Creates ``<base_dir>/gen_<N>/model.pt`` and ``<base_dir>/gen_<N>/metadata.json``.
 
     Parameters
     ----------
     model:
-        An SB3 model with a ``.save()`` method.
+        An SB3 model with a ``policy.state_dict()`` method.
     generation:
         Generation number (non-negative integer).
     metadata:
@@ -49,19 +49,13 @@ def save_generation(
     Path
         The generation directory (``<base_dir>/gen_<N>``).
     """
+    import torch
+
     bd = _base_dir(base_dir)
     gen_dir = bd / f"gen_{generation}"
     gen_dir.mkdir(parents=True, exist_ok=True)
 
-    model_path = gen_dir / "model"
-    model.save(str(model_path))
-
-    try:
-        import torch
-
-        torch.save(model.policy.state_dict(), str(gen_dir / "model.pt"))
-    except AttributeError:
-        pass  # test stubs without .policy
+    torch.save(model.policy.state_dict(), str(gen_dir / "model.pt"))
 
     meta = metadata or {}
     meta["generation"] = generation
@@ -98,8 +92,7 @@ def load_generation(
     bd = _base_dir(base_dir)
     gen_dir = bd / f"gen_{generation}"
 
-    pt_path = gen_dir / "model.pt"
-    model_path = pt_path if pt_path.exists() else gen_dir / "model"
+    model_path = gen_dir / "model.pt"
     model = load_agent(model_path, env=env)
 
     meta_path = gen_dir / "metadata.json"
@@ -196,7 +189,7 @@ def list_generations(base_dir: str | Path | None = None) -> list[dict[str, Any]]
         meta["generation"] = gen_num
 
         # Check if the model file exists
-        meta["model_exists"] = (gen_dir / "model.zip").exists() or (gen_dir / "model.pt").exists()
+        meta["model_exists"] = (gen_dir / "model.pt").exists()
 
         results.append(meta)
 

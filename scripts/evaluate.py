@@ -11,6 +11,9 @@ Examples:
     # Evaluate a specific generation
     python scripts/evaluate.py --model 3 --episodes 5
 
+    # Evaluate with deterministic seeding
+    python scripts/evaluate.py --model champion --episodes 10 --seed 42
+
     # Evaluate and save charts
     python scripts/evaluate.py --model champion --save-charts
 """
@@ -68,6 +71,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=1,
         help="Number of evaluation episodes (default: 1)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducible evaluation (default: 42)",
     )
     parser.add_argument(
         "--save-charts",
@@ -193,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"Using {len(test_df)} candles for test evaluation (last 20%)")
+    print(f"Seed: {args.seed}")
 
     # ── Create environment ───────────────────────────────────────────
     env = TradingEnv(
@@ -220,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── Run backtest ─────────────────────────────────────────────────
     print(f"\nRunning backtest ({args.episodes} episode(s))...")
-    result = run_backtest(model, env, n_episodes=args.episodes)
+    result = run_backtest(model, env, n_episodes=args.episodes, seed=args.seed)
 
     # ── Calculate and print metrics ──────────────────────────────────
     metrics = calculate_metrics(result)

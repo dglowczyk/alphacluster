@@ -33,15 +33,21 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def create_agent(env: gym.Env, config: TrainingConfig) -> PPO:
+def create_agent(
+    env: gym.Env,
+    config: TrainingConfig,
+    verbose: int = 1,
+) -> PPO:
     """Instantiate an SB3 PPO agent with the custom feature extractor.
 
     Parameters
     ----------
     env:
-        A TradingEnv (or compatible) with Dict observation space.
+        A TradingEnv (or VecEnv wrapping TradingEnvs) with Dict observation space.
     config:
         Training hyperparameters.
+    verbose:
+        Verbosity level for PPO logging (0=silent, 1=info, 2=debug).
 
     Returns
     -------
@@ -64,11 +70,103 @@ def create_agent(env: gym.Env, config: TrainingConfig) -> PPO:
         gae_lambda=config.gae_lambda,
         clip_range=config.clip_range,
         ent_coef=config.ent_coef,
-        verbose=1,
+        vf_coef=config.vf_coef,
+        max_grad_norm=config.max_grad_norm,
+        verbose=verbose,
         policy_kwargs=policy_kwargs,
     )
     logger.info("Created PPO agent: lr=%s, batch=%d", config.learning_rate, config.batch_size)
     return agent
+
+
+# ---------------------------------------------------------------------------
+# Curriculum callback
+# ---------------------------------------------------------------------------
+
+
+class CurriculumCallback(BaseCallback):
+    """Adjusts reward parameters and entropy coefficient across training phases.
+
+    Phase 1 — "Learn to Trade" (0–30%):
+        High exploration, strong inactivity penalty, lenient drawdowns.
+
+    Phase 2 — "Learn Quality" (30–70%):
+        Moderate exploration, normal penalties.
+
+    Phase 3 — "Refine & Exploit" (70–100%):
+        Low exploration, strict drawdown penalties.
+    """
+
+    def __init__(self, config: TrainingConfig, verbose: int = 0) -> None:
+        super().__init__(verbose)
+        self.config = config
+        self._current_phase: int = 0
+
+    def _on_step(self) -> bool:
+        progress = self.num_timesteps / self.config.total_timesteps
+        new_phase = self._get_phase(progress)
+
+        if new_phase != self._current_phase:
+            self._current_phase = new_phase
+            self._apply_phase(new_phase)
+
+        return True
+
+    def _get_phase(self, progress: float) -> int:
+        if progress < self.config.phase1_end:
+            return 1
+        if progress < self.config.phase2_end:
+            return 2
+        return 3
+
+    def _apply_phase(self, phase: int) -> None:
+        if phase == 1:
+            ent_coef = 0.1
+            reward_config = {
+                "inactivity_penalty_scale": 2.0,
+                "fee_scale": 0.5,
+                "drawdown_penalty_scale": 0.3,
+            }
+        elif phase == 2:
+            ent_coef = 0.05
+            reward_config = {
+                "inactivity_penalty_scale": 1.0,
+                "fee_scale": 1.0,
+                "drawdown_penalty_scale": 1.0,
+            }
+        else:  # phase 3
+            ent_coef = 0.01
+            reward_config = {
+                "inactivity_penalty_scale": 0.5,
+                "fee_scale": 1.0,
+                "drawdown_penalty_scale": 1.5,
+            }
+
+        # Update agent entropy coefficient
+        self.model.ent_coef = ent_coef
+
+        # Update reward config on all environments
+        self._set_env_reward_config(reward_config)
+
+        msg = f"Curriculum: phase {phase} (ent_coef={ent_coef})"
+        logger.info(msg)
+        if self.verbose:
+            print(msg)
+
+    def _set_env_reward_config(self, reward_config: dict[str, float]) -> None:
+        """Set reward_config on underlying TradingEnv(s)."""
+        env = self.model.get_env()
+        if env is None:
+            return
+
+        # VecEnv: set_attr broadcasts to all sub-environments
+        try:
+            env.set_attr("reward_config", reward_config)
+        except AttributeError:
+            # Fallback for single env
+            unwrapped = getattr(env, "unwrapped", env)
+            if hasattr(unwrapped, "reward_config"):
+                unwrapped.reward_config = reward_config
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +314,8 @@ def train(
     checkpoint_dir: str | Path | None = None,
     run_tournament: bool = False,
     progress_bar: bool = True,
+    verbose: int = 1,
+    extra_callbacks: list[BaseCallback] | None = None,
 ) -> PPO:
     """Train the agent with evaluation, checkpointing, and optional tournament hooks.
 
@@ -234,6 +334,10 @@ def train(
     progress_bar:
         If True, display a tqdm progress bar during training.  Disable when
         running under papermill to avoid IOPub timeouts.
+    verbose:
+        Verbosity level for callbacks (0=silent, 1=info).
+    extra_callbacks:
+        Additional callbacks to include in the training loop.
 
     Returns
     -------
@@ -253,7 +357,7 @@ def train(
             save_freq=config.eval_freq,
             save_path=str(checkpoint_dir),
             name_prefix="ppo_trading",
-            verbose=1,
+            verbose=verbose,
         )
     )
 
@@ -270,9 +374,13 @@ def train(
                 eval_freq=config.eval_freq,
                 n_eval_episodes=config.n_eval_episodes,
                 deterministic=True,
-                verbose=1,
+                verbose=verbose,
             )
         )
+
+    # ── Curriculum callback ──────────────────────────────────────────
+    if config.curriculum_enabled:
+        callbacks.append(CurriculumCallback(config, verbose=verbose))
 
     # ── Tournament callback ──────────────────────────────────────────
     if run_tournament:
@@ -281,9 +389,13 @@ def train(
                 tournament_freq=config.tournament_freq,
                 eval_env=eval_env,
                 config=config,
-                verbose=1,
+                verbose=verbose,
             )
         )
+
+    # ── Extra callbacks ────────────────────────────────────────────────
+    if extra_callbacks:
+        callbacks.extend(extra_callbacks)
 
     # ── Train ─────────────────────────────────────────────────────────
     logger.info(
@@ -392,5 +504,3 @@ def load_agent(path: str | Path, env: gym.Env | None = None) -> PPO:
     agent = PPO.load(str(path), env=env, custom_objects=custom_objects)
     logger.info("Agent loaded from %s", path)
     return agent
-
-

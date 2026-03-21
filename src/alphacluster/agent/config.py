@@ -17,21 +17,32 @@ class TrainingConfig:
     episode_length: int = 2016  # 1 week of 5-min candles
 
     # ── PPO ───────────────────────────────────────────────────────────────
-    learning_rate: float = 1e-4
+    learning_rate: float = 3e-4
     n_steps: int = 2048
-    batch_size: int = 256
+    batch_size: int = 128  # reduced for Transformer memory
     n_epochs: int = 10
-    gamma: float = 0.99
+    gamma: float = 0.995  # slightly higher for long-term credit assignment
     gae_lambda: float = 0.95
     clip_range: float = 0.2
-    ent_coef: float = 0.05  # Entropy bonus for exploration
+    ent_coef: float = 0.1  # start high — force exploration
+    vf_coef: float = 0.5
+    max_grad_norm: float = 0.5
 
     # ── Training schedule ────────────────────────────────────────────────
-    total_timesteps: int = 1_000_000
+    total_timesteps: int = 2_000_000
     eval_freq: int = 10_000
     n_eval_episodes: int = 10
 
+    # ── Parallel environments ────────────────────────────────────────────
+    n_envs: int = 4  # SubprocVecEnv parallelism
+
+    # ── Curriculum ───────────────────────────────────────────────────────
+    curriculum_enabled: bool = True
+    phase1_end: float = 0.3  # first 30% of training
+    phase2_end: float = 0.7  # middle 40%
+    # Phase 3: remaining 30%
+
     # ── Tournament ───────────────────────────────────────────────────────
-    tournament_freq: int = 50_000  # Timesteps between tournaments
+    tournament_freq: int = 100_000
     tournament_episodes: int = 20
-    promotion_threshold: float = 0.55  # Win rate to promote
+    promotion_threshold: float = 0.55  # win rate to promote

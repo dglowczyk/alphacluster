@@ -1,6 +1,7 @@
 """Data pipeline: download, store, validate, and serve OHLCV data."""
 
 from alphacluster.data.downloader import download_funding_rates, download_klines
+from alphacluster.data.indicators import INDICATOR_COLUMNS, compute_indicators
 from alphacluster.data.live_feed import DataSource, HistoricalDataSource, LiveDataSource
 from alphacluster.data.storage import (
     append_to_parquet,
@@ -23,4 +24,6 @@ __all__ = [
     "DataSource",
     "HistoricalDataSource",
     "LiveDataSource",
+    "compute_indicators",
+    "INDICATOR_COLUMNS",
 ]

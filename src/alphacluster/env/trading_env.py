@@ -16,19 +16,28 @@ from gymnasium import spaces
 from alphacluster.config import (
     EPISODE_LENGTH,
     LEVERAGE_OPTIONS,
+    N_ACCOUNT_FEATURES,
     N_DIRECTIONS,
     N_LEVERAGE_LEVELS,
+    N_MARKET_FEATURES,
     N_POSITION_SIZES,
     POSITION_SIZE_OPTIONS,
     WINDOW_SIZE,
 )
+from alphacluster.data.indicators import INDICATOR_COLUMNS, compute_indicators
 from alphacluster.env.account import Account
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 _FUNDING_HOURS = (0, 8, 16)  # UTC hours at which funding is applied
-_DRAWDOWN_PENALTY_COEFF = 0.1  # coefficient for drawdown penalty in reward
+
+# Default reward configuration — can be overridden by CurriculumCallback
+DEFAULT_REWARD_CONFIG: dict[str, float] = {
+    "inactivity_penalty_scale": 1.0,
+    "fee_scale": 1.0,
+    "drawdown_penalty_scale": 1.0,
+}
 
 
 class TradingEnv(gym.Env):
@@ -74,6 +83,9 @@ class TradingEnv(gym.Env):
         if not pd.api.types.is_datetime64_any_dtype(self.df["open_time"]):
             self.df["open_time"] = pd.to_datetime(self.df["open_time"], unit="ms", utc=True)
 
+        # Compute technical indicators
+        self.df = compute_indicators(self.df)
+
         # Pre-compute OHLCV numpy arrays for speed
         self._open = self.df["open"].to_numpy(dtype=np.float64)
         self._high = self.df["high"].to_numpy(dtype=np.float64)
@@ -81,6 +93,9 @@ class TradingEnv(gym.Env):
         self._close = self.df["close"].to_numpy(dtype=np.float64)
         self._volume = self.df["volume"].to_numpy(dtype=np.float64)
         self._timestamps = self.df["open_time"].to_numpy()
+
+        # Pre-compute indicator arrays
+        self._indicators = self.df[INDICATOR_COLUMNS].to_numpy(dtype=np.float64)
 
         # Funding lookup
         self._funding_map: dict[int, float] = {}
@@ -101,13 +116,13 @@ class TradingEnv(gym.Env):
                 "market": spaces.Box(
                     low=-np.inf,
                     high=np.inf,
-                    shape=(self.window_size, 5),
+                    shape=(self.window_size, N_MARKET_FEATURES),
                     dtype=np.float32,
                 ),
                 "account": spaces.Box(
                     low=-np.inf,
                     high=np.inf,
-                    shape=(7,),
+                    shape=(N_ACCOUNT_FEATURES,),
                     dtype=np.float32,
                 ),
             }
@@ -116,12 +131,24 @@ class TradingEnv(gym.Env):
             [N_DIRECTIONS, N_POSITION_SIZES, N_LEVERAGE_LEVELS]
         )
 
-        # ── Internal state (set properly in reset) ───────────────────────
+        # ── Reward configuration (mutable by CurriculumCallback) ───────
+        self.reward_config: dict[str, float] = dict(DEFAULT_REWARD_CONFIG)
+
+        # ── Internal state (set properly in reset) ─────────────────────
         self.account = Account(initial_balance=self.initial_balance)
         self._start_idx: int = 0
         self._current_idx: int = 0
         self._step_count: int = 0
         self._prev_equity: float = self.initial_balance
+
+        # ── Trade tracking for reward & observation ────────────────────
+        self._last_trade_pnl: float = 0.0
+        self._last_trade_duration: int = 0
+        self._steps_since_last_trade: int = 0
+        self._n_completed_trades: int = 0
+        self._n_winning_trades: int = 0
+        self._prev_unrealized_pnl: float = 0.0
+        self._trade_just_completed: bool = False
 
     # ── Gymnasium API ────────────────────────────────────────────────────
 
@@ -146,6 +173,15 @@ class TradingEnv(gym.Env):
         self.account.reset()
         self._prev_equity = self.initial_balance
 
+        # Reset trade tracking
+        self._last_trade_pnl = 0.0
+        self._last_trade_duration = 0
+        self._steps_since_last_trade = 0
+        self._n_completed_trades = 0
+        self._n_winning_trades = 0
+        self._prev_unrealized_pnl = 0.0
+        self._trade_just_completed = False
+
         obs = self._get_observation()
         info = self._get_info()
         return obs, info
@@ -158,7 +194,6 @@ class TradingEnv(gym.Env):
         direction = direction_idx  # 0=flat, 1=long, 2=short
 
         # Collapse flat actions: when direction=flat, size and leverage are irrelevant.
-        # This reduces 12 equivalent "flat" actions to a single semantic action.
         if direction == 0:
             size_pct = 0.0
             leverage = 1
@@ -171,16 +206,21 @@ class TradingEnv(gym.Env):
         total_funding = 0.0
         realized_pnl = 0.0
 
-        # ── Map direction to side string ─────────────────────────────────
+        # ── Track trade completion ─────────────────────────────────────
+        self._trade_just_completed = False
+        self._steps_since_last_trade += 1
+
+        # ── Map direction to side string ───────────────────────────────
         desired_side = {0: "flat", 1: "long", 2: "short"}[direction]
         current_side = self.account.position_side
 
-        # ── Execute trade logic ──────────────────────────────────────────
+        # ── Execute trade logic ────────────────────────────────────────
         if desired_side == "flat":
             if current_side != "flat":
                 rpnl, fee = self.account.close_position(current_price)
                 realized_pnl += rpnl
                 total_fees += fee
+                self._on_trade_completed(rpnl)
             # else: no-op — already flat, no fees
         elif desired_side != current_side:
             # Close existing position first (if any)
@@ -188,47 +228,39 @@ class TradingEnv(gym.Env):
                 rpnl, fee = self.account.close_position(current_price)
                 realized_pnl += rpnl
                 total_fees += fee
-            # Open new position (if size > 0)
-            if size_pct > 0.0:
-                fee = self.account.open_position(
-                    side=desired_side,
-                    size_pct=size_pct,
-                    leverage=leverage,
-                    price=current_price,
-                )
-                total_fees += fee
+                self._on_trade_completed(rpnl)
+            # Open new position (size is always > 0 now)
+            fee = self.account.open_position(
+                side=desired_side,
+                size_pct=size_pct,
+                leverage=leverage,
+                price=current_price,
+            )
+            total_fees += fee
         # else: same direction — hold, no fees
 
-        # ── Apply funding if 8-hour boundary crossed ─────────────────────
+        # ── Apply funding if 8-hour boundary crossed ───────────────────
         if self._current_idx > 0:
             total_funding = self._apply_funding_if_due()
 
-        # ── Increment position time ──────────────────────────────────────
+        # ── Increment position time ────────────────────────────────────
         if self.account.position_side != "flat":
             self.account.time_in_position += 1
 
-        # ── Advance to next candle ───────────────────────────────────────
+        # ── Advance to next candle ─────────────────────────────────────
         self._current_idx += 1
         self._step_count += 1
 
         # Update unrealized PnL with new candle's close
         new_price = float(self._close[self._current_idx])
+        self._prev_unrealized_pnl = self.account.unrealized_pnl
         self.account.update_unrealized_pnl(new_price)
 
-        # ── Compute reward ───────────────────────────────────────────────
-        current_equity = self.account.equity
-        equity_change = current_equity - self._prev_equity
-        # Normalize by initial balance
-        reward = equity_change / self.initial_balance
+        # ── Compute reward ─────────────────────────────────────────────
+        reward = self._compute_reward()
+        self._prev_equity = self.account.equity
 
-        # Drawdown penalty: constant per-step cost proportional to drawdown depth
-        drawdown = (self.account.peak_equity - current_equity) / self.account.peak_equity
-        dd_penalty = _DRAWDOWN_PENALTY_COEFF * max(0.0, drawdown)
-        reward -= dd_penalty * 0.001
-
-        self._prev_equity = current_equity
-
-        # ── Terminal conditions ───────────────────────────────────────────
+        # ── Terminal conditions ─────────────────────────────────────────
         truncated = False
         terminated = False
 
@@ -260,6 +292,76 @@ class TradingEnv(gym.Env):
 
         return obs, float(reward), terminated, truncated, info
 
+    # ── Reward ────────────────────────────────────────────────────────────
+
+    def _compute_reward(self) -> float:
+        """Multi-component reward function.
+
+        Components:
+        1. Asymmetric PnL reward (winners 1.5x)
+        2. Inactivity penalty (proportional to market move)
+        3. Position management reward (hold winners, cut losers)
+        4. Trade completion reward
+        5. Quadratic drawdown penalty
+        """
+        current_equity = self.account.equity
+        equity_change = current_equity - self._prev_equity
+
+        rc = self.reward_config
+
+        # 1. BASE PNL REWARD (asymmetric)
+        pnl_norm = equity_change / self.initial_balance
+        if pnl_norm > 0:
+            pnl_reward = pnl_norm * 1.5
+        else:
+            pnl_reward = pnl_norm
+
+        # 2. INACTIVITY PENALTY (opportunity cost)
+        inactivity_penalty = 0.0
+        if self.account.position_side == "flat" and self._current_idx > 0:
+            price_move = abs(self._close[self._current_idx] - self._close[self._current_idx - 1])
+            price_move_pct = price_move / max(self._close[self._current_idx - 1], 1e-12)
+            inactivity_penalty = 0.5 * price_move_pct * rc["inactivity_penalty_scale"]
+
+        # 3. POSITION MANAGEMENT REWARD
+        position_reward = 0.0
+        if self.account.position_side != "flat":
+            upnl_ratio = self.account.unrealized_pnl / self.initial_balance
+            if upnl_ratio > 0:
+                position_reward = 0.1 * upnl_ratio
+            else:
+                time_factor = 1.0 + self.account.time_in_position / 200.0
+                position_reward = 0.2 * upnl_ratio * time_factor
+
+        # 4. TRADE COMPLETION REWARD
+        completion_reward = 0.0
+        if self._trade_just_completed:
+            if self._last_trade_pnl > 0:
+                completion_reward = 0.001
+            elif self._last_trade_duration < 50:
+                completion_reward = 0.0005  # bonus for quick stop-loss
+
+        # 5. QUADRATIC DRAWDOWN PENALTY
+        drawdown = 0.0
+        if self.account.peak_equity > 0:
+            drawdown = (self.account.peak_equity - current_equity) / self.account.peak_equity
+        dd_penalty = 0.5 * max(0.0, drawdown) ** 2 * rc["drawdown_penalty_scale"]
+
+        reward = pnl_reward - inactivity_penalty + position_reward + completion_reward - dd_penalty
+        return reward
+
+    # ── Trade tracking ────────────────────────────────────────────────────
+
+    def _on_trade_completed(self, realized_pnl: float) -> None:
+        """Update trade tracking state when a position is closed."""
+        self._trade_just_completed = True
+        self._last_trade_pnl = realized_pnl
+        self._last_trade_duration = self.account.time_in_position
+        self._steps_since_last_trade = 0
+        self._n_completed_trades += 1
+        if realized_pnl > 0:
+            self._n_winning_trades += 1
+
     # ── Observation helpers ──────────────────────────────────────────────
 
     def _get_observation(self) -> dict[str, np.ndarray]:
@@ -268,7 +370,7 @@ class TradingEnv(gym.Env):
         return {"market": market, "account": account}
 
     def _get_market_obs(self) -> np.ndarray:
-        """Return normalized OHLCV window as (window_size, 5) float32."""
+        """Return normalized OHLCV + indicators as (window_size, 19) float32."""
         start = self._current_idx - self.window_size
         end = self._current_idx
 
@@ -288,11 +390,15 @@ class TradingEnv(gym.Env):
             vol_mean = 1.0
         v = vol_window / vol_mean - 1.0
 
-        market = np.stack([o, h, lo, c, v], axis=-1).astype(np.float32)
+        # Indicators: already normalized in the indicators module
+        indicators = self._indicators[start:end]  # (window_size, 14)
+
+        ohlcv = np.stack([o, h, lo, c, v], axis=-1)  # (window_size, 5)
+        market = np.concatenate([ohlcv, indicators], axis=-1).astype(np.float32)
         return market
 
     def _get_account_obs(self) -> np.ndarray:
-        """Return 7-dimensional normalized account feature vector."""
+        """Return 12-dimensional normalized account feature vector."""
         acct = self.account
         balance_ratio = acct.balance / self.initial_balance - 1.0
         pos_side = {
@@ -311,6 +417,19 @@ class TradingEnv(gym.Env):
             drawdown_ratio = (acct.peak_equity - acct.equity) / acct.peak_equity
         time_ratio = acct.time_in_position / self.episode_length
 
+        # New features
+        steps_since_trade = self._steps_since_last_trade / self.episode_length
+        last_trade_pnl_ratio = self._last_trade_pnl / self.initial_balance
+        n_trades_norm = self._n_completed_trades / 50.0
+        unrealized_pnl_velocity = (
+            acct.unrealized_pnl - self._prev_unrealized_pnl
+        ) / self.initial_balance
+        running_win_rate = (
+            self._n_winning_trades / self._n_completed_trades
+            if self._n_completed_trades > 0
+            else 0.5
+        )
+
         return np.array(
             [
                 balance_ratio,
@@ -320,6 +439,11 @@ class TradingEnv(gym.Env):
                 leverage_ratio,
                 drawdown_ratio,
                 time_ratio,
+                steps_since_trade,
+                last_trade_pnl_ratio,
+                n_trades_norm,
+                unrealized_pnl_velocity,
+                running_win_rate,
             ],
             dtype=np.float32,
         )

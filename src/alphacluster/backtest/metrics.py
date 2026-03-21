@@ -116,12 +116,38 @@ def calculate_metrics(result: BacktestResult) -> dict[str, Any]:
         metrics["worst_trade"] = 0.0
 
     # ── Episode stats ────────────────────────────────────────────────
-    metrics["n_episodes"] = len(result.episode_stats)
+    n_eps = len(result.episode_stats)
+    metrics["n_episodes"] = n_eps
     if result.episode_stats:
         returns_pct = [s["total_return_pct"] for s in result.episode_stats]
         metrics["avg_episode_return_pct"] = float(np.mean(returns_pct))
+
+        # Extended metrics from episode stats
+        trades_per_ep = [s["n_trades"] for s in result.episode_stats]
+        metrics["avg_trades_per_episode"] = float(np.mean(trades_per_ep))
+
+        flat_pcts = [s.get("flat_pct", 0.0) for s in result.episode_stats]
+        metrics["avg_flat_pct"] = float(np.mean(flat_pcts))
+
+        pos_steps = [s.get("position_steps", 0) for s in result.episode_stats]
+        n_trades_per_ep = [s["n_trades"] for s in result.episode_stats]
+        avg_time_in_pos = []
+        for ps, nt in zip(pos_steps, n_trades_per_ep):
+            if nt > 0:
+                avg_time_in_pos.append(ps / nt)
+        metrics["avg_time_in_position"] = float(np.mean(avg_time_in_pos)) if avg_time_in_pos else 0
+
+        win_streaks = [s.get("max_winning_streak", 0) for s in result.episode_stats]
+        lose_streaks = [s.get("max_losing_streak", 0) for s in result.episode_stats]
+        metrics["max_winning_streak"] = int(max(win_streaks)) if win_streaks else 0
+        metrics["max_losing_streak"] = int(max(lose_streaks)) if lose_streaks else 0
     else:
         metrics["avg_episode_return_pct"] = 0.0
+        metrics["avg_trades_per_episode"] = 0.0
+        metrics["avg_flat_pct"] = 0.0
+        metrics["avg_time_in_position"] = 0.0
+        metrics["max_winning_streak"] = 0
+        metrics["max_losing_streak"] = 0
 
     return metrics
 
@@ -167,6 +193,11 @@ def print_report(metrics: dict[str, Any]) -> None:
     if n_eps > 0:
         print(f"\n  Episodes:            {n_eps:>14d}")
         print(f"  Avg Episode Return:  {metrics.get('avg_episode_return_pct', 0):>13.2f}%")
+        print(f"  Avg Trades/Episode:  {metrics.get('avg_trades_per_episode', 0):>14.1f}")
+        print(f"  Avg Flat Time:       {metrics.get('avg_flat_pct', 0):>13.1f}%")
+        print(f"  Avg Time in Pos:     {metrics.get('avg_time_in_position', 0):>14.1f} steps")
+        print(f"  Max Win Streak:      {metrics.get('max_winning_streak', 0):>14d}")
+        print(f"  Max Lose Streak:     {metrics.get('max_losing_streak', 0):>14d}")
 
     print(sep)
 

@@ -9,6 +9,8 @@ from gymnasium.utils.env_checker import check_env
 
 from alphacluster.config import (
     MAKER_FEE,
+    N_ACCOUNT_FEATURES,
+    N_MARKET_FEATURES,
     TAKER_FEE,
     WINDOW_SIZE,
 )
@@ -284,8 +286,8 @@ class TestTradingEnv:
     def test_observation_space_shape(self):
         env = _make_env()
         obs, info = env.reset(seed=0)
-        assert obs["market"].shape == (WINDOW_SIZE, 5)
-        assert obs["account"].shape == (7,)
+        assert obs["market"].shape == (WINDOW_SIZE, N_MARKET_FEATURES)
+        assert obs["account"].shape == (N_ACCOUNT_FEATURES,)
 
     def test_action_space_size(self):
         env = _make_env()
@@ -340,8 +342,8 @@ class TestTradingEnv:
     def test_fee_deduction(self):
         env = _make_env()
         env.reset(seed=0)
-        # Open a long position
-        action = [1, 3, 0]  # long, 100% size, 1x leverage
+        # Open a long position: long, 100% size (index 3), 1x leverage
+        action = [1, 3, 0]
         _, _, _, _, info = env.step(action)
         assert info["fees"] > 0
         assert info["balance"] < 10_000.0
@@ -370,8 +372,8 @@ class TestTradingEnv:
         )
         env.reset(seed=0)
 
-        # Open a position first
-        env.step([1, 3, 2])  # long, 100%, 5x
+        # Open a position first: long, 100%, 5x
+        env.step([1, 3, 2])
 
         # Step through enough candles to cross an 8-hour boundary
         # 8 hours / 5 min = 96 candles
@@ -398,11 +400,11 @@ class TestTradingEnv:
         """Opening long then going short should close long first, then open short."""
         env = _make_env()
         env.reset(seed=0)
-        # Open long
-        env.step([1, 2, 0])  # long, 50%, 1x
+        # Open long: direction=1, size=50% (index 1), 1x leverage
+        env.step([1, 1, 0])
         assert env.account.position_side == "long"
         # Switch to short
-        env.step([2, 2, 0])  # short, 50%, 1x
+        env.step([2, 1, 0])
         assert env.account.position_side == "short"
         # There should be open, close, open in history
         assert len(env.account.trade_history) >= 3
@@ -411,10 +413,10 @@ class TestTradingEnv:
         """Holding the same direction should not charge fees."""
         env = _make_env()
         env.reset(seed=0)
-        # Open long
-        env.step([1, 2, 0])
+        # Open long: direction=1, size=50% (index 1), 1x leverage
+        env.step([1, 1, 0])
         # Hold long — same direction
-        _, _, _, _, info = env.step([1, 2, 0])
+        _, _, _, _, info = env.step([1, 1, 0])
         assert info["fees"] == 0.0
 
     def test_market_obs_normalization(self):
@@ -423,20 +425,19 @@ class TestTradingEnv:
         obs, _ = env.reset(seed=0)
         market = obs["market"]
         # The last candle's close (index -1, col 3) should be ratio to current close - 1
-        # which is (prev_close / current_close - 1), close to 0 for adjacent candles
         # Just verify the values are in a reasonable range
         assert np.all(np.isfinite(market))
-        # Prices should be close to 0 (ratios)
-        assert np.abs(market[:, :4]).max() < 1.0  # price ratios within 100%
+        # Price ratios (first 4 cols) should be within 100%
+        assert np.abs(market[:, :4]).max() < 1.0
 
     def test_account_obs_normalized(self):
         """Account features should be finite and reasonably bounded."""
         env = _make_env()
         obs, _ = env.reset(seed=0)
         acct_obs = obs["account"]
-        assert acct_obs.shape == (7,)
+        assert acct_obs.shape == (N_ACCOUNT_FEATURES,)
         assert np.all(np.isfinite(acct_obs))
-        # Initial state: balance_ratio=0, side=0, size=0, pnl=0, lev=0.05, dd=0, time=0
+        # Initial state: balance_ratio=0, side=0
         assert acct_obs[0] == pytest.approx(0.0)  # balance_ratio
         assert acct_obs[1] == pytest.approx(0.0)  # flat
 
@@ -471,3 +472,61 @@ class TestTradingEnv:
         spec = gymnasium.spec("CryptoPerp-v0")
         assert spec is not None
         assert spec.entry_point == "alphacluster.env.trading_env:TradingEnv"
+
+    def test_inactivity_penalty_when_flat(self):
+        """Flat agent should receive inactivity penalty proportional to market move."""
+        env = _make_env()
+        env.reset(seed=0)
+        # Stay flat for a few steps
+        rewards = []
+        for _ in range(10):
+            _, reward, *_ = env.step([0, 0, 0])
+            rewards.append(reward)
+        # Inactivity penalty should make most rewards slightly negative
+        # (unless market doesn't move)
+        assert any(r < 0 for r in rewards)
+
+    def test_trade_tracking_state(self):
+        """Trade tracking state should update when positions are closed."""
+        env = _make_env()
+        env.reset(seed=0)
+        assert env._n_completed_trades == 0
+
+        # Open and close a position
+        env.step([1, 1, 0])  # open long
+        env.step([0, 0, 0])  # close to flat
+        assert env._n_completed_trades == 1
+        assert env._steps_since_last_trade == 0
+
+    def test_reward_config_mutable(self):
+        """reward_config should be changeable for curriculum learning."""
+        env = _make_env()
+        env.reset(seed=0)
+        env.reward_config["inactivity_penalty_scale"] = 2.0
+        assert env.reward_config["inactivity_penalty_scale"] == 2.0
+
+    def test_position_sizes_no_zero(self):
+        """All non-flat actions should open positions (no 0% size)."""
+        env = _make_env()
+        env.reset(seed=0)
+        # Try all size indices with direction=long
+        for size_idx in range(4):
+            env.reset(seed=0)
+            env.step([1, size_idx, 0])
+            assert env.account.position_side == "long", (
+                f"size_idx={size_idx} should open a position"
+            )
+
+    def test_extended_account_features(self):
+        """Account obs should include all 12 features including new ones."""
+        env = _make_env()
+        env.reset(seed=0)
+        # Open, hold, close to populate tracking state
+        env.step([1, 1, 0])  # open long
+        env.step([1, 1, 0])  # hold
+        env.step([0, 0, 0])  # close
+        obs, *_ = env.step([0, 0, 0])  # flat
+        acct_obs = obs["account"]
+        assert acct_obs.shape == (N_ACCOUNT_FEATURES,)
+        # running_win_rate (index 11) should be 0 or 1 after one trade
+        assert acct_obs[11] in (0.0, 1.0)

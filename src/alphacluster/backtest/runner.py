@@ -38,6 +38,7 @@ def run_backtest(
     model: Any,
     env: Any,
     n_episodes: int = 1,
+    seed: int | None = None,
 ) -> BacktestResult:
     """Run the agent deterministically on the environment.
 
@@ -49,6 +50,8 @@ def run_backtest(
         A TradingEnv instance.
     n_episodes:
         Number of episodes to run.
+    seed:
+        Base random seed.  Episode *i* uses ``seed + i`` for reproducibility.
 
     Returns
     -------
@@ -58,12 +61,21 @@ def run_backtest(
     result = BacktestResult()
 
     for ep in range(n_episodes):
-        obs, info = env.reset()
+        ep_seed = seed + ep if seed is not None else None
+        obs, info = env.reset(seed=ep_seed)
         episode_equity: list[float] = [env.account.equity]
         episode_trades: list[dict[str, Any]] = []
         episode_reward = 0.0
         step = 0
         done = False
+
+        # Tracking for extended metrics
+        flat_steps = 0
+        position_steps = 0
+        winning_streak = 0
+        losing_streak = 0
+        max_winning_streak = 0
+        max_losing_streak = 0
 
         # Track open-trade state for pairing open/close entries
         open_trade: dict[str, Any] | None = None
@@ -75,6 +87,12 @@ def run_backtest(
             done = terminated or truncated
             episode_reward += reward
             step += 1
+
+            # Track flat/position time
+            if env.account.position_side == "flat":
+                flat_steps += 1
+            else:
+                position_steps += 1
 
             # Record equity at this step
             episode_equity.append(env.account.equity)
@@ -103,6 +121,17 @@ def run_backtest(
                         "balance": env.account.balance,
                     }
                     episode_trades.append(trade_record)
+
+                    # Streak tracking
+                    if trade_record["pnl"] > 0:
+                        winning_streak += 1
+                        max_winning_streak = max(max_winning_streak, winning_streak)
+                        losing_streak = 0
+                    else:
+                        losing_streak += 1
+                        max_losing_streak = max(max_losing_streak, losing_streak)
+                        winning_streak = 0
+
                     open_trade = None
                 elif th_entry["action"] == "close":
                     # Close without a tracked open (e.g., leftover from reset)
@@ -170,6 +199,7 @@ def run_backtest(
         # Episode stats
         initial_balance = env.initial_balance
         final_equity = env.account.equity
+        total_steps = flat_steps + position_steps
         ep_stat = {
             "episode": ep,
             "initial_balance": initial_balance,
@@ -180,13 +210,18 @@ def run_backtest(
             "n_steps": step,
             "max_equity": max(episode_equity) if episode_equity else initial_balance,
             "min_equity": min(episode_equity) if episode_equity else initial_balance,
+            "flat_steps": flat_steps,
+            "position_steps": position_steps,
+            "flat_pct": flat_steps / max(total_steps, 1) * 100.0,
+            "max_winning_streak": max_winning_streak,
+            "max_losing_streak": max_losing_streak,
         }
         result.episode_stats.append(ep_stat)
         result.trade_log.extend(episode_trades)
         result.equity_curve.extend(episode_equity)
 
         logger.info(
-            "Episode %d/%d: equity %.2f -> %.2f (%.2f%%), %d trades, %d steps",
+            "Episode %d/%d: equity %.2f -> %.2f (%.2f%%), %d trades, %d steps, %.1f%% flat",
             ep + 1,
             n_episodes,
             initial_balance,
@@ -194,6 +229,7 @@ def run_backtest(
             ep_stat["total_return_pct"],
             len(episode_trades),
             step,
+            ep_stat["flat_pct"],
         )
 
     return result

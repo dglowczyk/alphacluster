@@ -45,11 +45,17 @@ EPISODE_LENGTH = 2016  # 2016 x 5-min candles = 7 days per episode
 # Discrete action space
 # ---------------------------------------------------------------------------
 N_DIRECTIONS = 3  # long / short / flat
-N_POSITION_SIZES = 4  # e.g. 0%, 25%, 50%, 100% of max
+N_POSITION_SIZES = 4  # 25%, 50%, 75%, 100% of max
 N_LEVERAGE_LEVELS = 5  # e.g. 1x, 3x, 5x, 10x, 20x
 N_ACTIONS = N_DIRECTIONS * N_POSITION_SIZES * N_LEVERAGE_LEVELS  # 60
 
-POSITION_SIZE_OPTIONS = [0.0, 0.25, 0.50, 1.0]
+POSITION_SIZE_OPTIONS = [0.25, 0.50, 0.75, 1.0]
+
+# ---------------------------------------------------------------------------
+# Observation dimensions
+# ---------------------------------------------------------------------------
+N_MARKET_FEATURES = 19  # 5 OHLCV + 14 technical indicators
+N_ACCOUNT_FEATURES = 12
 LEVERAGE_OPTIONS = [1, 3, 5, 10, 20]
 
 # ---------------------------------------------------------------------------

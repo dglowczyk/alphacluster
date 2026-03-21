@@ -2,7 +2,7 @@
 """Train an RL agent on the crypto perpetual trading environment.
 
 Usage:
-    python scripts/train.py --timesteps 1000000
+    python scripts/train.py --timesteps 2000000
     python scripts/train.py --tournament   # train + run ELO tournament
 """
 
@@ -33,8 +33,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--timesteps",
         type=int,
-        default=1_000_000,
-        help="Total training timesteps (default: 1_000_000)",
+        default=2_000_000,
+        help="Total training timesteps (default: 2_000_000)",
     )
     parser.add_argument(
         "--learning-rate",
@@ -47,6 +47,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=None,
         help="Batch size (default: from TrainingConfig)",
+    )
+    parser.add_argument(
+        "--n-envs",
+        type=int,
+        default=None,
+        help="Number of parallel environments (default: from TrainingConfig)",
     )
     parser.add_argument(
         "--symbol",
@@ -64,6 +70,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=str,
         default=None,
         help="Directory to save model checkpoints (default: models/checkpoints)",
+    )
+    parser.add_argument(
+        "--no-curriculum",
+        action="store_true",
+        help="Disable curriculum learning",
     )
     return parser.parse_args(argv)
 
@@ -133,6 +144,22 @@ def split_data(
     return train_df, val_df, test_df
 
 
+def _make_env(df, funding_df, config, seed):
+    """Factory function for SubprocVecEnv."""
+
+    def _init():
+        env = TradingEnv(
+            df=df,
+            funding_df=funding_df,
+            window_size=config.window_size,
+            episode_length=config.episode_length,
+        )
+        env.reset(seed=seed)
+        return env
+
+    return _init
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
@@ -148,16 +175,30 @@ def main(argv: list[str] | None = None) -> int:
         config_overrides["learning_rate"] = args.learning_rate
     if args.batch_size is not None:
         config_overrides["batch_size"] = args.batch_size
+    if args.n_envs is not None:
+        config_overrides["n_envs"] = args.n_envs
+    if args.no_curriculum:
+        config_overrides["curriculum_enabled"] = False
     config = TrainingConfig(total_timesteps=args.timesteps, **config_overrides)
 
-    # ── Create environments ──────────────────────────────────────────────
-    print("Creating training environment ...")
-    train_env = TradingEnv(
-        df=train_df,
-        funding_df=funding_df,
-        window_size=config.window_size,
-        episode_length=config.episode_length,
-    )
+    # ── Create parallel training environments ─────────────────────────────
+    n_envs = config.n_envs
+    print(f"Creating {n_envs} parallel training environments ...")
+
+    if n_envs > 1:
+        from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
+
+        envs = SubprocVecEnv(
+            [_make_env(train_df, funding_df, config, i) for i in range(n_envs)]
+        )
+        train_env = VecNormalize(envs, norm_obs=False, norm_reward=True, clip_reward=10.0)
+    else:
+        train_env = TradingEnv(
+            df=train_df,
+            funding_df=funding_df,
+            window_size=config.window_size,
+            episode_length=config.episode_length,
+        )
 
     eval_env = None
     if len(val_df) > config.window_size + config.episode_length:
@@ -179,6 +220,8 @@ def main(argv: list[str] | None = None) -> int:
     checkpoint_dir = args.checkpoint_dir or str(MODELS_DIR / "checkpoints")
     print(f"Training for {config.total_timesteps:,} timesteps ...")
     print(f"  Checkpoints: {checkpoint_dir}")
+    print(f"  Parallel envs: {n_envs}")
+    print(f"  Curriculum: {'enabled' if config.curriculum_enabled else 'disabled'}")
     if args.tournament:
         print(f"  Tournament enabled (every {config.tournament_freq:,} steps)")
 

@@ -66,7 +66,7 @@ make tournament      # Run ELO tournament
 
 1. **OHLCV + Technical Indicators** -- The observation includes 5 raw OHLCV features plus 14 normalized technical indicators (returns, volatility, RSI, MACD, Bollinger Bands, ATR, volume ratio, OBV slope, VWAP distance). All computed in `data/indicators.py`.
 
-2. **Discrete action space (36 actions)**: direction (long/short/flat=3) x position size (25%/50%/75%/100%=4) x leverage (5x/10x/15x=3). No 0% size option — choosing long/short always opens a position; flat is the only way to have no position.
+2. **Discrete action space (36 actions)**: direction (long/short/flat=3) x position size (2%/5%/10%/15%=4) x leverage (5x/10x/15x=3). No 0% size option — choosing long/short always opens a position; flat is the only way to have no position.
 
 3. **Observation space**: Market observation is (576, 19) — 576 candles x 19 features. Account observation is (12,) — 7 original features + 5 trade-tracking features (steps since trade, last PnL, trade count, unrealized PnL velocity, running win rate).
 
@@ -94,11 +94,13 @@ make tournament      # Run ELO tournament
 
 10. **Data source**: Binance Futures public REST API. No API keys required for historical OHLCV.
 
+11. **Isolated margin liquidation**: Each position uses isolated margin (balance × size_pct at open). Liquidation only loses the allocated margin, not the entire account. Episode continues after liquidation, allowing the agent to learn from both the liquidation penalty and subsequent recovery. This makes `size_pct` a meaningful risk-management dimension — smaller positions risk less capital on liquidation.
+
 ## Key Constants (config.py)
 
 - TAKER_FEE = 0.0004, MAKER_FEE = 0.0002
 - WINDOW_SIZE = 576, EPISODE_LENGTH = 2016
-- N_ACTIONS = 36 (3 x 4 x 3), POSITION_SIZE_OPTIONS = [0.25, 0.50, 0.75, 1.0]
+- N_ACTIONS = 36 (3 x 4 x 3), POSITION_SIZE_OPTIONS = [0.02, 0.05, 0.10, 0.15]
 - LEVERAGE_OPTIONS = [5, 10, 15]
 - N_MARKET_FEATURES = 19, N_ACCOUNT_FEATURES = 12
 - MAX_LEVERAGE = 15

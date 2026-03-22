@@ -20,7 +20,7 @@ src/alphacluster/
     live_feed.py     - Historical data source for backtesting (loads from parquet)
   env/
     mechanics.py     - Stateless helpers: fee, funding, PnL, liquidation, slippage
-    account.py       - Position tracking, margin, equity, trade history
+    account.py       - Position tracking, margin, equity, trade history, position modification
     trading_env.py   - Gymnasium TradingEnv (Dict obs, discrete actions, registered as CryptoPerp-v0)
   agent/
     network.py       - TradingFeatureExtractor: CNN+Transformer for market data + MLP for account state
@@ -32,12 +32,12 @@ src/alphacluster/
     versioning.py    - save/load generations, champion.json tracking
   backtest/
     runner.py        - run_backtest: deterministic episode replay, trade log collection
-    metrics.py       - Sharpe, Sortino, max drawdown, win rate, profit factor, flat time, streaks
+    metrics.py       - Sharpe, Sortino, max drawdown, win rate, profit factor, direction breakdown, leverage distribution, trade quality
     visualizer.py    - Equity curves, trade overlay, action distribution (matplotlib Agg)
 
 notebooks/           - Jupyter notebooks (kaggle_train.ipynb for GPU training on Kaggle)
 scripts/             - Standalone entry points (download_data, train, evaluate)
-tests/               - pytest suite: test_data, test_env, test_indicators, test_tournament (138 tests)
+tests/               - pytest suite: test_data, test_env, test_indicators, test_tournament (146 tests)
 data/                - Raw and processed OHLCV data (gitignored)
 models/              - Saved model checkpoints and ELO ratings (gitignored)
 ```
@@ -46,7 +46,7 @@ models/              - Saved model checkpoints and ELO ratings (gitignored)
 
 ```bash
 make setup           # Create venv + install deps
-make test            # Run pytest (138 tests)
+make test            # Run pytest (146 tests)
 make lint            # Ruff check + format check
 make format          # Auto-fix lint + format
 make download-data   # Fetch candles from Binance
@@ -66,23 +66,25 @@ make tournament      # Run ELO tournament
 
 1. **OHLCV + Technical Indicators** -- The observation includes 5 raw OHLCV features plus 14 normalized technical indicators (returns, volatility, RSI, MACD, Bollinger Bands, ATR, volume ratio, OBV slope, VWAP distance). All computed in `data/indicators.py`.
 
-2. **Discrete action space (60 actions)**: direction (long/short/flat=3) x position size (25%/50%/75%/100%=4) x leverage (1x/3x/5x/10x/20x=5). No 0% size option — choosing long/short always opens a position; flat is the only way to have no position.
+2. **Discrete action space (36 actions)**: direction (long/short/flat=3) x position size (25%/50%/75%/100%=4) x leverage (5x/10x/15x=3). No 0% size option — choosing long/short always opens a position; flat is the only way to have no position.
 
 3. **Observation space**: Market observation is (576, 19) — 576 candles x 19 features. Account observation is (12,) — 7 original features + 5 trade-tracking features (steps since trade, last PnL, trade count, unrealized PnL velocity, running win rate).
 
 4. **Episode length**: 2016 candles (= 7 days of 5-min data).
 
-5. **Multi-component reward function** (5 components):
+5. **Multi-component reward function** (7 components):
    - Asymmetric PnL reward (winners weighted 1.5x)
-   - Inactivity penalty (proportional to market movement when flat)
-   - Position management reward (bonus for holding winners, escalating penalty for losers)
-   - Trade completion reward (bonus for winning trades, bonus for quick loss cuts)
+   - Fee penalty (explicit trading cost awareness, scaled by `fee_scale`)
+   - Inactivity penalty (trend-based with 20-step grace period, 0.2% threshold)
+   - Position management reward (hold winners with time bonus up to 3x, escalating penalty for losers)
+   - Trade completion reward (PnL-scaled for winners, always negative for losers with quick-cut mitigation)
+   - Churn penalty (penalizes trades held fewer than 10 steps)
    - Quadratic drawdown penalty
 
 6. **Curriculum learning** (3 phases):
-   - Phase 1 (0-30%): "Learn to Trade" — high entropy, strong inactivity penalty, reduced fees
-   - Phase 2 (30-70%): "Learn Quality" — moderate exploration, normal penalties
-   - Phase 3 (70-100%): "Refine & Exploit" — low entropy, strict drawdown penalties
+   - Phase 1 (0-30%): "Learn to Trade" — moderate entropy (0.05), zero fee/inactivity/churn penalties
+   - Phase 2 (30-70%): "Learn Quality" — moderate exploration, half-strength cost penalties
+   - Phase 3 (70-100%): "Refine & Exploit" — low entropy, amplified fee (1.5x) and churn (1.5x) penalties
 
 7. **CNN+Transformer feature extractor**: 2 Conv1d layers compress (576, 19) → (144, 128), then 3-layer Transformer encoder (4 heads, d_model=128) with learnable positional encoding, adaptive pooling to 128-dim. Account MLP outputs 64-dim. Total: 192-dim feature vector.
 
@@ -96,11 +98,12 @@ make tournament      # Run ELO tournament
 
 - TAKER_FEE = 0.0004, MAKER_FEE = 0.0002
 - WINDOW_SIZE = 576, EPISODE_LENGTH = 2016
-- N_ACTIONS = 60 (3 x 4 x 5), POSITION_SIZE_OPTIONS = [0.25, 0.50, 0.75, 1.0]
+- N_ACTIONS = 36 (3 x 4 x 3), POSITION_SIZE_OPTIONS = [0.25, 0.50, 0.75, 1.0]
+- LEVERAGE_OPTIONS = [5, 10, 15]
 - N_MARKET_FEATURES = 19, N_ACCOUNT_FEATURES = 12
-- MAX_LEVERAGE = 20
+- MAX_LEVERAGE = 15
 - LEARNING_RATE = 3e-4, BATCH_SIZE = 128, GAMMA = 0.995
-- TOTAL_TIMESTEPS = 2_000_000
+- TOTAL_TIMESTEPS = 5_000_000
 - INITIAL_ELO = 1500, ELO_K_FACTOR = 32
 
 ## Conventions
@@ -117,7 +120,7 @@ make tournament      # Run ELO tournament
 
 - pytest with test files in `tests/`
 - Test files mirror the source structure: test_data, test_env, test_indicators, test_tournament
-- 138 tests covering data pipeline, indicators, environment mechanics, trading env, ELO, arena, and versioning
+- 146 tests covering data pipeline, indicators, environment mechanics, trading env, position modification, ELO, arena, and versioning
 - Tests use synthetic data and mock HTTP responses (no network calls)
 - Run with: `make test` or `.venv/bin/python -m pytest tests/ -v`
 

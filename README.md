@@ -35,9 +35,10 @@ AlphaZero-inspired deep reinforcement learning system for backtesting crypto per
 
 - **OHLCV + 14 technical indicators** — RSI, MACD, Bollinger Bands, ATR, volume ratio, OBV slope, VWAP distance, returns, volatility
 - **CNN+Transformer feature extractor** — Conv1d compression + 3-layer Transformer encoder with learnable positional encoding
-- **Discrete action space**: direction (3) x position size (4) x leverage (5) = 60 actions; no 0% size — agent must trade or explicitly go flat
-- **Multi-component reward** — asymmetric PnL (1.5x winners), inactivity penalty, position management, trade completion bonus, quadratic drawdown
-- **Curriculum learning** — 3 phases: explore (high entropy) → quality (normal) → exploit (strict drawdown)
+- **Discrete action space**: direction (3) x position size (4) x leverage (3) = 36 actions; no 0% size — agent must trade or explicitly go flat
+- **Multi-component reward** (7 components) — asymmetric PnL (1.5x winners), fee penalty, trend-based inactivity penalty (20-step grace), position management (hold winners with time bonus), trade completion (always negative for losers), churn penalty, quadratic drawdown
+- **Curriculum learning** — 3 phases: learn mechanics (zero cost penalties) → introduce costs (half-strength) → full discipline (amplified fees/churn)
+- **Position modification** — change leverage/size within same direction at reduced fees (delta-only)
 - **Parallel training** — 4x SubprocVecEnv + VecNormalize reward normalization
 - **576-candle observation window** (2 days of 5-min data) with 19 features per candle
 - **12-dimensional account state** — balance, position, PnL, drawdown, trade tracking, win rate
@@ -66,13 +67,13 @@ make download-data
 # Or via CLI:
 alphacluster download-data --symbol BTCUSDT --days 365
 
-# 2. Train a PPO agent (2M timesteps, 4 parallel envs, curriculum learning)
+# 2. Train a PPO agent (5M timesteps, 4 parallel envs, curriculum learning)
 make train
 # Or via CLI:
-alphacluster train --timesteps 2000000
+alphacluster train --timesteps 5000000
 
 # 3. Train with tournament mode (saves generations, runs ELO matches)
-alphacluster train --timesteps 2000000 --tournament
+alphacluster train --timesteps 5000000 --tournament
 
 # 4. Evaluate the champion model on held-out data (reproducible with --seed)
 make evaluate
@@ -142,7 +143,7 @@ alphacluster/
 │   │   └── live_feed.py       # Historical data source for backtesting
 │   ├── env/                   # Gymnasium trading environment
 │   │   ├── mechanics.py       # Fee, funding, PnL, slippage calculations
-│   │   ├── account.py         # Position tracking, margin, liquidation
+│   │   ├── account.py         # Position tracking, margin, liquidation, position modification
 │   │   └── trading_env.py     # TradingEnv (registered as CryptoPerp-v0)
 │   ├── agent/                 # RL agent
 │   │   ├── network.py         # CNN+Transformer feature extractor for Dict obs
@@ -154,7 +155,7 @@ alphacluster/
 │   │   └── versioning.py      # Generation save/load, champion tracking
 │   └── backtest/              # Backtesting engine
 │       ├── runner.py          # Run agent through episodes, collect trade logs
-│       ├── metrics.py         # Sharpe, Sortino, drawdown, win rate, flat %, streaks
+│       ├── metrics.py         # Sharpe, Sortino, drawdown, win rate, direction breakdown, leverage distribution, trade quality
 │       └── visualizer.py      # Equity curves, trade charts (matplotlib)
 ├── scripts/                   # Standalone runnable scripts
 │   ├── download_data.py       # Data download with progress bars
@@ -162,7 +163,7 @@ alphacluster/
 │   └── evaluate.py            # Evaluation with seeding and extended metrics
 ├── notebooks/                 # Jupyter notebooks
 │   └── kaggle_train.ipynb     # GPU training on Kaggle (quiet logging)
-├── tests/                     # Test suite (138 tests)
+├── tests/                     # Test suite (146 tests)
 │   ├── test_data.py           # Data pipeline tests
 │   ├── test_env.py            # Environment + account + mechanics tests
 │   ├── test_indicators.py     # Technical indicators tests
@@ -196,10 +197,10 @@ Kaggle provides free GPU access (Tesla P100/T4) for faster training.
 ### What the notebook does
 
 - Creates 4 parallel SubprocVecEnv environments with VecNormalize reward normalization
-- Trains with curriculum learning (3 phases over 2M timesteps)
+- Trains with curriculum learning (3 phases over 5M timesteps)
 - Uses the CNN+Transformer feature extractor
 - Evaluates on 5 episodes with deterministic seeding (seed=42)
-- Prints extended metrics: trades/episode, flat time %, win/lose streaks
+- Prints extended metrics: trades/episode, flat time %, win/lose streaks, direction breakdown, leverage distribution, trade quality
 
 ## Stack
 

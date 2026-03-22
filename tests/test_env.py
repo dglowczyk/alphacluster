@@ -268,6 +268,77 @@ class TestAccount:
         assert acct.trade_history[0]["action"] == "open"
         assert acct.trade_history[1]["action"] == "close"
 
+    def test_modify_position_flat_is_noop(self):
+        acct = Account(initial_balance=10_000.0)
+        fee = acct.modify_position(0.5, 5, 50_000.0)
+        assert fee == 0.0
+        assert len(acct.trade_history) == 0
+
+    def test_modify_position_changes_leverage(self):
+        acct = Account(initial_balance=10_000.0)
+        acct.open_position("long", 0.5, 1, 50_000.0)
+        original_entry = acct.entry_price
+        original_balance = acct.balance
+        fee = acct.modify_position(0.5, 5, 50_000.0)
+        assert fee > 0
+        assert acct.leverage == 5
+        # Entry price should remain unchanged
+        assert acct.entry_price == original_entry
+        assert acct.balance < original_balance  # fee was deducted
+        assert acct.trade_history[-1]["action"] == "modify"
+
+    def test_modify_position_reduced_fees_vs_close_open(self):
+        """Modifying a position should cost less in fees than close + open."""
+        price = 50_000.0
+
+        # Approach 1: close + open (full round-trip fees)
+        acct1 = Account(initial_balance=10_000.0)
+        acct1.open_position("long", 0.5, 1, price)
+        _, close_fee = acct1.close_position(price)
+        open_fee = acct1.open_position("long", 0.5, 5, price)
+        full_fees = close_fee + open_fee
+
+        # Approach 2: modify (delta-only fees)
+        acct2 = Account(initial_balance=10_000.0)
+        acct2.open_position("long", 0.5, 1, price)
+        modify_fee = acct2.modify_position(0.5, 5, price)
+
+        assert modify_fee < full_fees, (
+            f"Modify fee ({modify_fee:.4f}) should be less than close+open ({full_fees:.4f})"
+        )
+
+    def test_modify_position_downsize_realizes_pnl(self):
+        """Downsizing should realize PnL on the reduced portion."""
+        acct = Account(initial_balance=10_000.0)
+        acct.open_position("long", 1.0, 1, 50_000.0)
+        original_size = acct.position_size
+        # Price goes up, then modify to smaller size — should realize partial profit
+        acct.modify_position(0.25, 1, 51_000.0)
+        assert acct.position_size > 0
+        assert acct.position_size < original_size
+        assert acct.position_side == "long"
+
+    def test_modify_position_preserves_side(self):
+        acct = Account(initial_balance=10_000.0)
+        acct.open_position("short", 0.5, 3, 50_000.0)
+        acct.modify_position(0.75, 10, 50_000.0)
+        assert acct.position_side == "short"
+        assert acct.leverage == 10
+
+    def test_modify_position_fee_on_delta_only(self):
+        """Fee should be proportional to |new_notional - old_notional|, not total notional."""
+        acct = Account(initial_balance=10_000.0)
+        acct.open_position("long", 0.5, 1, 50_000.0)
+        # old_notional = balance * 0.5 * 1 = ~5000 (at entry time)
+        # new_notional = balance * 0.5 * 3 (3x leverage) — delta is ~10000
+        old_notional = acct.position_size * acct.entry_price
+        balance_before_modify = acct.balance
+        fee = acct.modify_position(0.5, 3, 50_000.0)
+        new_notional = (balance_before_modify * 0.5) * 3
+        expected_delta = abs(new_notional - old_notional)
+        expected_fee = calculate_fee(expected_delta, TAKER_FEE)
+        assert fee == pytest.approx(expected_fee, rel=1e-6)
+
 
 # ===========================================================================
 # TradingEnv tests
@@ -418,6 +489,48 @@ class TestTradingEnv:
         # Hold long — same direction
         _, _, _, _, info = env.step([1, 1, 0])
         assert info["fees"] == 0.0
+
+    def test_modify_position_via_env_step(self):
+        """Changing leverage while keeping direction should use modify_position."""
+        env = _make_env()
+        env.reset(seed=0)
+        # Open long: direction=1, size=50% (index 1), 1x leverage (index 0)
+        env.step([1, 1, 0])
+        assert env.account.position_side == "long"
+        assert env.account.leverage == 1
+        # Change to 20x leverage (index 4) — same direction, different leverage
+        _, _, _, _, info = env.step([1, 1, 4])
+        assert info["fees"] > 0  # fees charged for modification
+        assert env.account.leverage == 20  # leverage updated
+        assert env.account.position_side == "long"  # still long
+        # Should be a modify in trade history, not close+open
+        assert env.account.trade_history[-1]["action"] == "modify"
+
+    def test_modify_position_cheaper_than_reversal(self):
+        """Modifying via env step should be cheaper than close+reopen."""
+        env1 = _make_env()
+        env1.reset(seed=0)
+        # Open long 1x, then modify to 20x
+        env1.step([1, 1, 0])  # open long, 50%, 1x
+        _, _, _, _, info_modify = env1.step([1, 1, 4])  # long, 50%, 20x
+        modify_fees = info_modify["fees"]
+
+        env2 = _make_env()
+        env2.reset(seed=0)
+        # Open long 1x, close, reopen at 20x
+        env2.step([1, 1, 0])  # open long, 50%, 1x
+        env2.step([0, 0, 0])  # close (flat)
+        _, _, _, _, info_reopen = env2.step([1, 1, 4])  # open long, 50%, 20x
+        # Close fees from step 2 + open fees from step 3
+        # We need to sum them manually from trade history
+        close_fee = env2.account.trade_history[1]["fee"]
+        reopen_fee = env2.account.trade_history[2]["fee"]
+        roundtrip_fees = close_fee + reopen_fee
+
+        assert modify_fees < roundtrip_fees, (
+            f"Modify fees ({modify_fees:.6f}) should be less than "
+            f"close+open fees ({roundtrip_fees:.6f})"
+        )
 
     def test_market_obs_normalization(self):
         """OHLCV prices should be normalized relative to current close."""

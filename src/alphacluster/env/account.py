@@ -181,6 +181,76 @@ class Account:
         self._update_peak_equity()
         return realized_pnl, fee
 
+    def modify_position(
+        self,
+        size_pct: float,
+        leverage: int,
+        price: float,
+        fee_rate: float = TAKER_FEE,
+    ) -> float:
+        """Modify the size/leverage of an existing position at reduced fees.
+
+        Only the delta in notional value is subject to fees (simulating a partial
+        close + partial open rather than full round-trip).
+
+        Parameters
+        ----------
+        size_pct:
+            New fraction of current balance to allocate (0.0--1.0).
+        leverage:
+            New leverage multiplier.
+        price:
+            Raw market price (slippage is applied internally).
+        fee_rate:
+            Fee rate to use (default: taker fee).
+
+        Returns
+        -------
+        float
+            Total fee paid for the modification.
+        """
+        if self.position_side == "flat":
+            return 0.0
+
+        # Apply slippage (direction depends on position side)
+        buy_or_sell = "buy" if self.position_side == "long" else "sell"
+        exec_price = apply_slippage(price, buy_or_sell)
+
+        # Old notional from current position
+        old_notional = self.position_size * self.entry_price
+
+        # New notional based on current balance and requested params
+        new_notional = (self.balance * size_pct) * leverage
+        new_size = new_notional / exec_price
+
+        # Fee only on the delta
+        fee = calculate_fee(abs(new_notional - old_notional), fee_rate)
+        self.balance -= fee
+
+        # If downsizing, realize PnL on the reduced portion
+        if new_size < self.position_size:
+            reduced_size = self.position_size - new_size
+            pnl = calculate_pnl(self.entry_price, exec_price, reduced_size, self.position_side)
+            self.balance += pnl
+
+        # Update position (keep entry_price unchanged)
+        self.position_size = new_size
+        self.leverage = leverage
+
+        self.trade_history.append(
+            {
+                "action": "modify",
+                "side": self.position_side,
+                "price": exec_price,
+                "size": new_size,
+                "old_notional": old_notional,
+                "new_notional": new_notional,
+                "leverage": leverage,
+                "fee": fee,
+            }
+        )
+        return fee
+
     def update_unrealized_pnl(self, current_price: float) -> None:
         """Recalculate unrealized PnL at *current_price*."""
         if self.position_side == "flat":

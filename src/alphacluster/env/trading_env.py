@@ -240,7 +240,27 @@ class TradingEnv(gym.Env):
                 price=current_price,
             )
             total_fees += fee
-        # else: same direction — hold, no fees
+        else:
+            # Same direction — check if size/leverage differs
+            current_leverage = self.account.leverage
+            if self.account.entry_price > 0:
+                current_notional = self.account.position_size * self.account.entry_price
+                current_size_pct_approx = (
+                    current_notional / (self.account.balance * current_leverage)
+                    if (self.account.balance * current_leverage) > 0
+                    else 0.0
+                )
+            else:
+                current_size_pct_approx = 0.0
+
+            if abs(size_pct - current_size_pct_approx) > 0.05 or leverage != current_leverage:
+                fee = self.account.modify_position(
+                    size_pct=size_pct,
+                    leverage=leverage,
+                    price=current_price,
+                )
+                total_fees += fee
+            # else: truly holding the same position, no action
 
         # ── Apply funding if 8-hour boundary crossed ───────────────────
         if self._current_idx > 0:

@@ -134,6 +134,31 @@ def run_backtest(
                         winning_streak = 0
 
                     open_trade = None
+                elif th_entry["action"] == "liquidation" and open_trade is not None:
+                    trade_record = {
+                        "step": open_trade["open_step"],
+                        "close_step": step,
+                        "action": "liquidation",
+                        "direction": th_entry["side"],
+                        "size": th_entry["size"],
+                        "leverage": open_trade.get("leverage", 1),
+                        "entry_price": th_entry.get("entry_price", open_trade.get("price", 0.0)),
+                        "exit_price": 0.0,
+                        "pnl": -th_entry.get("margin_lost", 0.0),
+                        "fee": open_trade.get("fee", 0.0),
+                        "balance": env.account.balance,
+                    }
+                    episode_trades.append(trade_record)
+
+                    # Streak tracking
+                    losing_streak += 1
+                    max_losing_streak = max(max_losing_streak, losing_streak)
+                    winning_streak = 0
+
+                    open_trade = None
+                elif th_entry["action"] == "liquidation":
+                    # Liquidation without tracked open
+                    open_trade = None
                 elif th_entry["action"] == "close":
                     # Close without a tracked open (e.g., leftover from reset)
                     trade_record = {

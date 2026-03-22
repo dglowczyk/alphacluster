@@ -253,7 +253,7 @@ class TradingEnv(gym.Env):
             else:
                 current_size_pct_approx = 0.0
 
-            if abs(size_pct - current_size_pct_approx) > 0.05 or leverage != current_leverage:
+            if abs(size_pct - current_size_pct_approx) > 0.01 or leverage != current_leverage:
                 fee = self.account.modify_position(
                     size_pct=size_pct,
                     leverage=leverage,
@@ -290,15 +290,9 @@ class TradingEnv(gym.Env):
 
         # Liquidation check
         if self.account.position_side != "flat" and self.account.is_liquidated(new_price):
-            # Force close — balance goes to near zero
-            loss = self.account.equity
-            self.account.balance = 0.0
-            self.account.unrealized_pnl = 0.0
-            self.account.position_side = "flat"
-            self.account.position_size = 0.0
-            self.account.entry_price = 0.0
-            reward = -loss / self.initial_balance  # large negative reward
-            truncated = True
+            margin_lost = self.account.liquidate()
+            reward = -margin_lost / self.initial_balance
+            self._on_trade_completed(-margin_lost)
 
         # Episode length
         if self._step_count >= self.episode_length:

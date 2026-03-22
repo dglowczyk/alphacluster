@@ -45,11 +45,11 @@ EPISODE_LENGTH = 2016  # 2016 x 5-min candles = 7 days per episode
 # Discrete action space
 # ---------------------------------------------------------------------------
 N_DIRECTIONS = 3  # long / short / flat
-N_POSITION_SIZES = 4  # 25%, 50%, 75%, 100% of max
+N_POSITION_SIZES = 4  # 2%, 5%, 10%, 15% of balance
 N_LEVERAGE_LEVELS = 3  # 5x, 10x, 15x
 N_ACTIONS = N_DIRECTIONS * N_POSITION_SIZES * N_LEVERAGE_LEVELS  # 36
 
-POSITION_SIZE_OPTIONS = [0.25, 0.50, 0.75, 1.0]
+POSITION_SIZE_OPTIONS = [0.02, 0.05, 0.10, 0.15]
 
 # ---------------------------------------------------------------------------
 # Observation dimensions

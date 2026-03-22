@@ -41,6 +41,7 @@ class Account:
     unrealized_pnl: float = field(init=False, default=0.0)
     peak_equity: float = field(init=False)
     time_in_position: int = field(init=False, default=0)  # candles
+    margin: float = field(init=False, default=0.0)  # isolated margin locked for position
 
     # ── History ──────────────────────────────────────────────────────────
     trade_history: list[dict[str, Any]] = field(init=False, default_factory=list)
@@ -102,6 +103,9 @@ class Account:
 
         # Calculate position
         margin = self.balance * size_pct
+        if margin <= 0:
+            return 0.0
+        self.margin = margin
         notional = margin * leverage
         size_units = notional / exec_price
 
@@ -176,6 +180,7 @@ class Account:
         self.entry_price = 0.0
         self.leverage = 1
         self.unrealized_pnl = 0.0
+        self.margin = 0.0
         self.time_in_position = 0
 
         self._update_peak_equity()
@@ -236,6 +241,7 @@ class Account:
         # Update position (keep entry_price unchanged)
         self.position_size = new_size
         self.leverage = leverage
+        self.margin = self.balance * size_pct
 
         self.trade_history.append(
             {
@@ -285,17 +291,52 @@ class Account:
         else:  # short
             return current_price >= liq_price
 
+    def liquidate(self) -> float:
+        """Liquidate position under isolated margin — lose only the allocated margin.
+
+        Returns
+        -------
+        float
+            The margin amount lost.
+        """
+        if self.position_side == "flat":
+            return 0.0
+
+        margin_lost = self.margin
+        self.balance = max(self.balance - margin_lost, 0.0)
+
+        self.trade_history.append(
+            {
+                "action": "liquidation",
+                "side": self.position_side,
+                "entry_price": self.entry_price,
+                "size": self.position_size,
+                "margin_lost": margin_lost,
+            }
+        )
+
+        # Reset position state
+        self.position_side = "flat"
+        self.position_size = 0.0
+        self.entry_price = 0.0
+        self.leverage = 1
+        self.unrealized_pnl = 0.0
+        self.margin = 0.0
+        self.time_in_position = 0
+
+        self._update_peak_equity()
+        return margin_lost
+
     def margin_ratio(self) -> float:
-        """Return the current margin ratio (equity / initial margin).
+        """Return the current margin ratio (equity / margin).
 
         Returns ``float('inf')`` when there is no open position.
         """
         if self.position_side == "flat":
             return float("inf")
-        initial_margin = self.entry_price * self.position_size / self.leverage
-        if initial_margin == 0:
+        if self.margin == 0:
             return float("inf")
-        return self.equity / initial_margin
+        return self.equity / self.margin
 
     def reset(self) -> None:
         """Reset the account to its initial state."""
@@ -305,6 +346,7 @@ class Account:
         self.entry_price = 0.0
         self.leverage = 1
         self.unrealized_pnl = 0.0
+        self.margin = 0.0
         self.peak_equity = self.initial_balance
         self.time_in_position = 0
         self.trade_history.clear()

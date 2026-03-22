@@ -225,7 +225,8 @@ class Account:
         old_notional = self.position_size * self.entry_price
 
         # New notional based on current balance and requested params
-        new_notional = (self.balance * size_pct) * leverage
+        new_margin = self.balance * size_pct
+        new_notional = new_margin * leverage
         new_size = new_notional / exec_price
 
         # Fee only on the delta
@@ -241,7 +242,7 @@ class Account:
         # Update position (keep entry_price unchanged)
         self.position_size = new_size
         self.leverage = leverage
-        self.margin = self.balance * size_pct
+        self.margin = new_margin
 
         self.trade_history.append(
             {

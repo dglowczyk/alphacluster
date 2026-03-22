@@ -220,18 +220,22 @@ class TradingEnv(gym.Env):
         # ── Execute trade logic ────────────────────────────────────────
         if desired_side == "flat":
             if current_side != "flat":
+                duration = self.account.time_in_position
                 rpnl, fee = self.account.close_position(current_price)
                 realized_pnl += rpnl
                 total_fees += fee
                 self._on_trade_completed(rpnl)
+                self._last_trade_duration = duration
             # else: no-op — already flat, no fees
         elif desired_side != current_side:
             # Close existing position first (if any)
             if current_side != "flat":
+                duration = self.account.time_in_position
                 rpnl, fee = self.account.close_position(current_price)
                 realized_pnl += rpnl
                 total_fees += fee
                 self._on_trade_completed(rpnl)
+                self._last_trade_duration = duration
             # Open new position (size is always > 0 now)
             fee = self.account.open_position(
                 side=desired_side,
@@ -290,9 +294,11 @@ class TradingEnv(gym.Env):
 
         # Liquidation check
         if self.account.position_side != "flat" and self.account.is_liquidated(new_price):
+            duration = self.account.time_in_position
             margin_lost = self.account.liquidate()
             reward = -margin_lost / self.initial_balance
             self._on_trade_completed(-margin_lost)
+            self._last_trade_duration = duration
 
         # Episode length
         if self._step_count >= self.episode_length:

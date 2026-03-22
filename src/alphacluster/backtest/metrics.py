@@ -29,21 +29,18 @@ def calculate_metrics(result: BacktestResult) -> dict[str, Any]:
     """
     metrics: dict[str, Any] = {}
 
-    equity = np.array(result.equity_curve, dtype=np.float64)
+    episodes = result.equity_curve  # list[list[float]]
     trades = result.trade_log
 
     # ── Equity-based metrics ─────────────────────────────────────────
-    if len(equity) > 1:
-        initial_equity = equity[0]
-        final_equity = equity[-1]
-    elif len(equity) == 1:
-        initial_equity = equity[0]
-        final_equity = equity[0]
+    if episodes:
+        initial_equity = episodes[0][0] if episodes[0] else 0.0
+        final_equity = episodes[-1][-1] if episodes[-1] else 0.0
     else:
         initial_equity = 0.0
         final_equity = 0.0
 
-    # Total PnL
+    # Total PnL (first episode start to last episode end)
     total_pnl = final_equity - initial_equity
     total_pnl_pct = (total_pnl / initial_equity * 100.0) if initial_equity != 0 else 0.0
     metrics["total_pnl"] = total_pnl
@@ -51,23 +48,32 @@ def calculate_metrics(result: BacktestResult) -> dict[str, Any]:
     metrics["initial_equity"] = initial_equity
     metrics["final_equity"] = final_equity
 
-    # Returns (step-over-step)
-    if len(equity) > 1:
-        returns = np.diff(equity) / np.maximum(equity[:-1], 1e-12)
-    else:
-        returns = np.array([])
+    # Per-episode returns, Sharpe, Sortino, and max drawdown
+    periods_per_year = 288 * 365  # 5-min candles
+    ep_sharpes: list[float] = []
+    ep_sortinos: list[float] = []
+    worst_dd = 0.0
+    worst_dd_pct = 0.0
 
-    # Sharpe ratio (annualized, assuming 5-min candles: 288 per day, 365 days)
-    periods_per_year = 288 * 365
-    metrics["sharpe_ratio"] = _sharpe_ratio(returns, periods_per_year)
+    for ep_equity_list in episodes:
+        eq = np.array(ep_equity_list, dtype=np.float64)
+        if len(eq) > 1:
+            ep_returns = np.diff(eq) / np.maximum(eq[:-1], 1e-12)
+            ep_sharpes.append(_sharpe_ratio(ep_returns, periods_per_year))
+            ep_sortinos.append(_sortino_ratio(ep_returns, periods_per_year))
 
-    # Sortino ratio
-    metrics["sortino_ratio"] = _sortino_ratio(returns, periods_per_year)
+            dd, dd_pct = _max_drawdown(eq)
+            if dd_pct > worst_dd_pct:
+                worst_dd = dd
+                worst_dd_pct = dd_pct
 
-    # Max drawdown
-    max_dd, max_dd_pct = _max_drawdown(equity)
-    metrics["max_drawdown"] = max_dd
-    metrics["max_drawdown_pct"] = max_dd_pct
+    # Average per-episode Sharpe and Sortino
+    metrics["sharpe_ratio"] = float(np.mean(ep_sharpes)) if ep_sharpes else 0.0
+    metrics["sortino_ratio"] = float(np.mean(ep_sortinos)) if ep_sortinos else 0.0
+
+    # Max drawdown: worst single-episode drawdown
+    metrics["max_drawdown"] = worst_dd
+    metrics["max_drawdown_pct"] = worst_dd_pct
 
     # ── Trade-based metrics ──────────────────────────────────────────
     n_trades = len(trades)

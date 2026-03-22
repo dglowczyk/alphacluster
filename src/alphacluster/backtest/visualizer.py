@@ -43,24 +43,37 @@ def plot_equity_curve(
     if ax is None:
         _, ax = plt.subplots(figsize=(12, 5))
 
-    equity = np.array(result.equity_curve, dtype=np.float64)
-    steps = np.arange(len(equity))
+    # Plot each episode's equity curve separately with vertical separators
+    offset = 0
+    colors = plt.cm.tab10.colors  # type: ignore[attr-defined]
+    n_episodes = len(result.equity_curve)
 
-    # Equity line
-    ax.plot(steps, equity, color="steelblue", linewidth=1.0, label="Equity")
+    for i, ep_equity in enumerate(result.equity_curve):
+        equity = np.array(ep_equity, dtype=np.float64)
+        steps = np.arange(offset, offset + len(equity))
+        color = colors[i % len(colors)]
 
-    # Drawdown shading
-    if len(equity) > 1:
-        peak = np.maximum.accumulate(equity)
-        ax.fill_between(
-            steps,
-            equity,
-            peak,
-            where=(peak > equity),
-            color="salmon",
-            alpha=0.3,
-            label="Drawdown",
-        )
+        label = "Equity" if i == 0 else None
+        ax.plot(steps, equity, color=color, linewidth=1.0, label=label)
+
+        # Drawdown shading per episode
+        if len(equity) > 1:
+            peak = np.maximum.accumulate(equity)
+            ax.fill_between(
+                steps,
+                equity,
+                peak,
+                where=(peak > equity),
+                color="salmon",
+                alpha=0.3,
+                label="Drawdown" if i == 0 else None,
+            )
+
+        # Vertical separator between episodes
+        if i < n_episodes - 1:
+            ax.axvline(x=offset + len(equity) - 1, color="gray", linestyle="--", alpha=0.5)
+
+        offset += len(equity)
 
     ax.set_title("Equity Curve")
     ax.set_xlabel("Step")

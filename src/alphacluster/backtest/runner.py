@@ -24,13 +24,14 @@ class BacktestResult:
         Each entry has: step, action, direction, size, leverage,
         entry_price, exit_price, pnl, fee, balance.
     equity_curve:
-        List of equity values (balance + unrealized PnL) at each step.
+        List of per-episode equity curves. Each inner list contains equity
+        values (balance + unrealized PnL) at each step within that episode.
     episode_stats:
         List of per-episode summary dicts.
     """
 
     trade_log: list[dict[str, Any]] = field(default_factory=list)
-    equity_curve: list[float] = field(default_factory=list)
+    equity_curve: list[list[float]] = field(default_factory=list)
     episode_stats: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -218,7 +219,7 @@ def run_backtest(
         }
         result.episode_stats.append(ep_stat)
         result.trade_log.extend(episode_trades)
-        result.equity_curve.extend(episode_equity)
+        result.equity_curve.append(episode_equity)
 
         logger.info(
             "Episode %d/%d: equity %.2f -> %.2f (%.2f%%), %d trades, %d steps, %.1f%% flat",

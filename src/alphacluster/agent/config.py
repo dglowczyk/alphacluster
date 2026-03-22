@@ -24,12 +24,12 @@ class TrainingConfig:
     gamma: float = 0.995  # slightly higher for long-term credit assignment
     gae_lambda: float = 0.95
     clip_range: float = 0.2
-    ent_coef: float = 0.1  # start high — force exploration
+    ent_coef: float = 0.05  # moderate exploration
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
 
     # ── Training schedule ────────────────────────────────────────────────
-    total_timesteps: int = 2_000_000
+    total_timesteps: int = 5_000_000
     eval_freq: int = 10_000
     n_eval_episodes: int = 10
 

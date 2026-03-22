@@ -49,10 +49,10 @@ def _make_env(n_candles: int = 3200, episode_length: int = 200) -> TradingEnv:
 
 
 class _AlwaysLongModel:
-    """Fake model that always goes long 50% at 1x leverage."""
+    """Fake model that always goes long 50% at 5x leverage."""
 
     def predict(self, obs, deterministic=False):
-        # direction=1 (long), size=2 (50%), leverage=0 (1x)
+        # direction=1 (long), size=2 (50%), leverage=0 (5x)
         return np.array([1, 2, 0]), None
 
 
@@ -60,7 +60,7 @@ class _OpenAndHoldModel:
     """Fake model that opens long on step 0 and holds forever (never goes flat)."""
 
     def predict(self, obs, deterministic=False):
-        # direction=1 (long), size=2 (50%), leverage=0 (1x)
+        # direction=1 (long), size=2 (50%), leverage=0 (5x)
         return np.array([1, 2, 0]), None
 
 

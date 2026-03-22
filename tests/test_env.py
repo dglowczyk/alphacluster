@@ -365,7 +365,7 @@ class TestTradingEnv:
         assert env.action_space.shape == (3,)
         assert env.action_space.nvec[0] == 3  # directions
         assert env.action_space.nvec[1] == 4  # sizes
-        assert env.action_space.nvec[2] == 5  # leverages
+        assert env.action_space.nvec[2] == 3  # leverages
 
     def test_reset_returns_valid_obs(self):
         env = _make_env()
@@ -413,7 +413,7 @@ class TestTradingEnv:
     def test_fee_deduction(self):
         env = _make_env()
         env.reset(seed=0)
-        # Open a long position: long, 100% size (index 3), 1x leverage
+        # Open a long position: long, 100% size (index 3), 5x leverage
         action = [1, 3, 0]
         _, _, _, _, info = env.step(action)
         assert info["fees"] > 0
@@ -471,7 +471,7 @@ class TestTradingEnv:
         """Opening long then going short should close long first, then open short."""
         env = _make_env()
         env.reset(seed=0)
-        # Open long: direction=1, size=50% (index 1), 1x leverage
+        # Open long: direction=1, size=50% (index 1), 5x leverage
         env.step([1, 1, 0])
         assert env.account.position_side == "long"
         # Switch to short
@@ -484,7 +484,7 @@ class TestTradingEnv:
         """Holding the same direction should not charge fees."""
         env = _make_env()
         env.reset(seed=0)
-        # Open long: direction=1, size=50% (index 1), 1x leverage
+        # Open long: direction=1, size=50% (index 1), 5x leverage
         env.step([1, 1, 0])
         # Hold long — same direction
         _, _, _, _, info = env.step([1, 1, 0])
@@ -494,14 +494,14 @@ class TestTradingEnv:
         """Changing leverage while keeping direction should use modify_position."""
         env = _make_env()
         env.reset(seed=0)
-        # Open long: direction=1, size=50% (index 1), 1x leverage (index 0)
+        # Open long: direction=1, size=50% (index 1), 5x leverage (index 0)
         env.step([1, 1, 0])
         assert env.account.position_side == "long"
-        assert env.account.leverage == 1
-        # Change to 20x leverage (index 4) — same direction, different leverage
-        _, _, _, _, info = env.step([1, 1, 4])
+        assert env.account.leverage == 5
+        # Change to 15x leverage (index 2) — same direction, different leverage
+        _, _, _, _, info = env.step([1, 1, 2])
         assert info["fees"] > 0  # fees charged for modification
-        assert env.account.leverage == 20  # leverage updated
+        assert env.account.leverage == 15  # leverage updated
         assert env.account.position_side == "long"  # still long
         # Should be a modify in trade history, not close+open
         assert env.account.trade_history[-1]["action"] == "modify"
@@ -510,17 +510,17 @@ class TestTradingEnv:
         """Modifying via env step should be cheaper than close+reopen."""
         env1 = _make_env()
         env1.reset(seed=0)
-        # Open long 1x, then modify to 20x
-        env1.step([1, 1, 0])  # open long, 50%, 1x
-        _, _, _, _, info_modify = env1.step([1, 1, 4])  # long, 50%, 20x
+        # Open long 5x, then modify to 15x
+        env1.step([1, 1, 0])  # open long, 50%, 5x
+        _, _, _, _, info_modify = env1.step([1, 1, 2])  # long, 50%, 15x
         modify_fees = info_modify["fees"]
 
         env2 = _make_env()
         env2.reset(seed=0)
-        # Open long 1x, close, reopen at 20x
-        env2.step([1, 1, 0])  # open long, 50%, 1x
+        # Open long 5x, close, reopen at 15x
+        env2.step([1, 1, 0])  # open long, 50%, 5x
         env2.step([0, 0, 0])  # close (flat)
-        _, _, _, _, info_reopen = env2.step([1, 1, 4])  # open long, 50%, 20x
+        _, _, _, _, info_reopen = env2.step([1, 1, 2])  # open long, 50%, 15x
         # Close fees from step 2 + open fees from step 3
         # We need to sum them manually from trade history
         close_fee = env2.account.trade_history[1]["fee"]

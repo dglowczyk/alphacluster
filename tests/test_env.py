@@ -339,6 +339,80 @@ class TestAccount:
         expected_fee = calculate_fee(expected_delta, TAKER_FEE)
         assert fee == pytest.approx(expected_fee, rel=1e-6)
 
+    # ------------------------------------------------------------------
+    # Isolated margin tests
+    # ------------------------------------------------------------------
+
+    def test_margin_stored_on_open(self):
+        """Margin field should equal balance * size_pct after opening."""
+        acct = Account(initial_balance=10_000.0)
+        acct.open_position("long", 0.10, 10, 50_000.0)
+        assert acct.margin == pytest.approx(1_000.0, rel=1e-6)
+
+    def test_margin_reset_on_close(self):
+        """Margin should be zero after closing a position."""
+        acct = Account(initial_balance=10_000.0)
+        acct.open_position("long", 0.10, 5, 50_000.0)
+        assert acct.margin > 0
+        acct.close_position(50_000.0)
+        assert acct.margin == 0.0
+
+    def test_margin_updated_on_modify(self):
+        """Margin should be recalculated after position modification."""
+        acct = Account(initial_balance=10_000.0)
+        acct.open_position("long", 0.05, 5, 50_000.0)
+        original_margin = acct.margin
+        assert original_margin == pytest.approx(500.0, rel=1e-6)
+        acct.modify_position(0.10, 5, 50_000.0)
+        assert acct.margin != original_margin
+        assert acct.margin > 0
+
+    def test_isolated_margin_liquidation(self):
+        """Liquidation should lose only the margin, not the entire balance."""
+        acct = Account(initial_balance=10_000.0)
+        acct.open_position("long", 0.10, 10, 50_000.0)
+        margin = acct.margin
+        balance_after_open_fee = acct.balance  # balance minus opening fee
+        margin_lost = acct.liquidate()
+        assert margin_lost == pytest.approx(margin)
+        assert acct.balance == pytest.approx(balance_after_open_fee - margin)
+        assert acct.position_side == "flat"
+        assert acct.margin == 0.0
+        assert acct.position_size == 0.0
+        # Check trade history records liquidation
+        liq_entries = [t for t in acct.trade_history if t["action"] == "liquidation"]
+        assert len(liq_entries) == 1
+        assert liq_entries[0]["margin_lost"] == pytest.approx(margin)
+
+    def test_liquidation_flat_is_noop(self):
+        """Liquidating a flat account should return 0 and change nothing."""
+        acct = Account(initial_balance=10_000.0)
+        result = acct.liquidate()
+        assert result == 0.0
+        assert acct.balance == 10_000.0
+
+    def test_multiple_liquidations(self):
+        """Multiple open/liquidate cycles should correctly reduce balance each time."""
+        acct = Account(initial_balance=10_000.0)
+
+        # First cycle: 10% margin
+        acct.open_position("long", 0.10, 10, 50_000.0)
+        first_margin = acct.margin
+        balance_before_first_liq = acct.balance
+        acct.liquidate()
+        assert acct.balance == pytest.approx(balance_before_first_liq - first_margin)
+        assert acct.position_side == "flat"
+
+        # Second cycle: 10% of remaining balance
+        remaining = acct.balance
+        acct.open_position("short", 0.10, 5, 50_000.0)
+        second_margin = acct.margin
+        assert second_margin == pytest.approx(remaining * 0.10, rel=1e-4)
+        balance_before_second_liq = acct.balance
+        acct.liquidate()
+        assert acct.balance == pytest.approx(balance_before_second_liq - second_margin)
+        assert acct.balance > 0  # Still has balance left
+
 
 # ===========================================================================
 # TradingEnv tests

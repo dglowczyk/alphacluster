@@ -7,6 +7,7 @@ Provides :func:`calculate_metrics` for a full metrics dict and
 from __future__ import annotations
 
 import math
+from collections import defaultdict
 from typing import Any
 
 import numpy as np
@@ -121,6 +122,114 @@ def calculate_metrics(result: BacktestResult) -> dict[str, Any]:
         metrics["best_trade"] = 0.0
         metrics["worst_trade"] = 0.0
 
+    # ── Direction breakdown (F1) ─────────────────────────────────────
+    if n_trades > 0:
+        long_trades = [t for t in trades if t.get("direction") == "long"]
+        short_trades = [t for t in trades if t.get("direction") == "short"]
+
+        long_count = len(long_trades)
+        short_count = len(short_trades)
+        metrics["long_count"] = long_count
+        metrics["short_count"] = short_count
+
+        long_pnls = np.array([t["pnl"] for t in long_trades], dtype=np.float64)
+        short_pnls = np.array([t["pnl"] for t in short_trades], dtype=np.float64)
+
+        metrics["long_win_rate"] = (
+            float(np.sum(long_pnls > 0) / long_count * 100.0) if long_count > 0 else 0.0
+        )
+        metrics["short_win_rate"] = (
+            float(np.sum(short_pnls > 0) / short_count * 100.0) if short_count > 0 else 0.0
+        )
+        metrics["long_avg_pnl"] = float(np.mean(long_pnls)) if long_count > 0 else 0.0
+        metrics["short_avg_pnl"] = float(np.mean(short_pnls)) if short_count > 0 else 0.0
+        metrics["long_total_pnl"] = float(np.sum(long_pnls)) if long_count > 0 else 0.0
+        metrics["short_total_pnl"] = float(np.sum(short_pnls)) if short_count > 0 else 0.0
+
+        # Profit factor per direction
+        for prefix, dir_pnls in [("long", long_pnls), ("short", short_pnls)]:
+            if len(dir_pnls) > 0:
+                gp = float(np.sum(dir_pnls[dir_pnls > 0]))
+                gl = float(np.abs(np.sum(dir_pnls[dir_pnls <= 0])))
+                if gl > 0:
+                    metrics[f"{prefix}_profit_factor"] = gp / gl
+                else:
+                    metrics[f"{prefix}_profit_factor"] = float("inf") if gp > 0 else 0.0
+            else:
+                metrics[f"{prefix}_profit_factor"] = 0.0
+    else:
+        metrics["long_count"] = 0
+        metrics["short_count"] = 0
+        metrics["long_win_rate"] = 0.0
+        metrics["short_win_rate"] = 0.0
+        metrics["long_avg_pnl"] = 0.0
+        metrics["short_avg_pnl"] = 0.0
+        metrics["long_total_pnl"] = 0.0
+        metrics["short_total_pnl"] = 0.0
+        metrics["long_profit_factor"] = 0.0
+        metrics["short_profit_factor"] = 0.0
+
+    # ── Leverage distribution (F2) ────────────────────────────────
+    if n_trades > 0:
+        lev_groups: dict[int, list[float]] = defaultdict(list)
+        for t in trades:
+            lev_groups[int(t.get("leverage", 1))].append(t["pnl"])
+
+        leverage_distribution: dict[int, int] = {}
+        leverage_win_rates: dict[int, float] = {}
+        leverage_avg_pnl: dict[int, float] = {}
+
+        for lev in sorted(lev_groups):
+            lev_pnls = np.array(lev_groups[lev], dtype=np.float64)
+            leverage_distribution[lev] = len(lev_pnls)
+            leverage_win_rates[lev] = float(np.sum(lev_pnls > 0) / len(lev_pnls) * 100.0)
+            leverage_avg_pnl[lev] = float(np.mean(lev_pnls))
+
+        metrics["leverage_distribution"] = leverage_distribution
+        metrics["leverage_win_rates"] = leverage_win_rates
+        metrics["leverage_avg_pnl"] = leverage_avg_pnl
+    else:
+        metrics["leverage_distribution"] = {}
+        metrics["leverage_win_rates"] = {}
+        metrics["leverage_avg_pnl"] = {}
+
+    # ── Trade quality metrics (F3) ─────────────────────────────────
+    if n_trades > 0:
+        win_durations = []
+        loss_durations = []
+        for t in trades:
+            open_step = t.get("step", 0)
+            close_step = t.get("close_step", open_step)
+            dur = close_step - open_step
+            if t["pnl"] > 0:
+                win_durations.append(dur)
+            else:
+                loss_durations.append(dur)
+
+        metrics["avg_win_duration"] = float(np.mean(win_durations)) if win_durations else 0.0
+        metrics["avg_loss_duration"] = float(np.mean(loss_durations)) if loss_durations else 0.0
+
+        avg_win = metrics["avg_win"]
+        avg_loss = metrics["avg_loss"]
+        metrics["risk_reward_ratio"] = (
+            abs(avg_win / avg_loss) if avg_loss != 0 else (float("inf") if avg_win > 0 else 0.0)
+        )
+
+        total_fees = metrics["total_fees"]
+        total_trade_pnl = float(np.sum(pnls))
+        metrics["fee_to_pnl_ratio"] = (
+            total_fees / abs(total_trade_pnl) * 100.0 if abs(total_trade_pnl) > 1e-12 else 0.0
+        )
+
+        win_rate_frac = metrics["win_rate"] / 100.0
+        metrics["expectancy"] = (win_rate_frac * avg_win) + ((1 - win_rate_frac) * avg_loss)
+    else:
+        metrics["avg_win_duration"] = 0.0
+        metrics["avg_loss_duration"] = 0.0
+        metrics["risk_reward_ratio"] = 0.0
+        metrics["fee_to_pnl_ratio"] = 0.0
+        metrics["expectancy"] = 0.0
+
     # ── Episode stats ────────────────────────────────────────────────
     n_eps = len(result.episode_stats)
     metrics["n_episodes"] = n_eps
@@ -204,6 +313,52 @@ def print_report(metrics: dict[str, Any]) -> None:
         print(f"  Avg Time in Pos:     {metrics.get('avg_time_in_position', 0):>14.1f} steps")
         print(f"  Max Win Streak:      {metrics.get('max_winning_streak', 0):>14d}")
         print(f"  Max Lose Streak:     {metrics.get('max_losing_streak', 0):>14d}")
+
+    # ── Direction breakdown ────────────────────────────────────────
+    long_count = metrics.get("long_count", 0)
+    short_count = metrics.get("short_count", 0)
+    if long_count > 0 or short_count > 0:
+        print(f"\n{'── DIRECTION BREAKDOWN ':─<60}")
+        print(
+            f"  Long Trades:         {long_count:>10d}"
+            f"  (win rate: {metrics.get('long_win_rate', 0):.1f}%)"
+        )
+        print(
+            f"  Short Trades:        {short_count:>10d}"
+            f"  (win rate: {metrics.get('short_win_rate', 0):.1f}%)"
+        )
+        print(f"  Long Avg PnL:        {metrics.get('long_avg_pnl', 0):>14,.2f}")
+        print(f"  Short Avg PnL:       {metrics.get('short_avg_pnl', 0):>14,.2f}")
+        print(f"  Long Profit Factor:  {_fmt_float(metrics.get('long_profit_factor', 0)):>14s}")
+        print(f"  Short Profit Factor: {_fmt_float(metrics.get('short_profit_factor', 0)):>14s}")
+
+    # ── Leverage distribution ─────────────────────────────────────
+    lev_dist = metrics.get("leverage_distribution", {})
+    if lev_dist:
+        print(f"\n{'── LEVERAGE DISTRIBUTION ':─<60}")
+        total_trades = sum(lev_dist.values())
+        lev_win_rates = metrics.get("leverage_win_rates", {})
+        lev_avg_pnl = metrics.get("leverage_avg_pnl", {})
+        for lev in sorted(lev_dist):
+            count = lev_dist[lev]
+            pct = count / total_trades * 100.0 if total_trades > 0 else 0.0
+            wr = lev_win_rates.get(lev, 0.0)
+            avg = lev_avg_pnl.get(lev, 0.0)
+            print(
+                f"  {lev}x:{count:>7d} trades ({pct:>4.1f}%)"
+                f"  win rate: {wr:>5.1f}%"
+                f"  avg PnL: {avg:>8.2f}"
+            )
+
+    # ── Trade quality ──────────────────────────────────────────────
+    trade_count = metrics.get("trade_count", 0)
+    if trade_count > 0:
+        print(f"\n{'── TRADE QUALITY ':─<60}")
+        print(f"  Risk/Reward Ratio:   {_fmt_float(metrics.get('risk_reward_ratio', 0)):>14s}")
+        print(f"  Avg Win Duration:    {metrics.get('avg_win_duration', 0):>14.1f} steps")
+        print(f"  Avg Loss Duration:   {metrics.get('avg_loss_duration', 0):>14.1f} steps")
+        print(f"  Fee/PnL Ratio:       {metrics.get('fee_to_pnl_ratio', 0):>13.1f}%")
+        print(f"  Expectancy/Trade:    {metrics.get('expectancy', 0):>14,.2f}")
 
     print(sep)
 

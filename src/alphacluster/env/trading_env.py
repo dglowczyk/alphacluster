@@ -224,8 +224,7 @@ class TradingEnv(gym.Env):
                 rpnl, fee = self.account.close_position(current_price)
                 realized_pnl += rpnl
                 total_fees += fee
-                self._on_trade_completed(rpnl)
-                self._last_trade_duration = duration
+                self._on_trade_completed(rpnl, duration)
             # else: no-op — already flat, no fees
         elif desired_side != current_side:
             # Close existing position first (if any)
@@ -234,8 +233,7 @@ class TradingEnv(gym.Env):
                 rpnl, fee = self.account.close_position(current_price)
                 realized_pnl += rpnl
                 total_fees += fee
-                self._on_trade_completed(rpnl)
-                self._last_trade_duration = duration
+                self._on_trade_completed(rpnl, duration)
             # Open new position (size is always > 0 now)
             fee = self.account.open_position(
                 side=desired_side,
@@ -297,8 +295,7 @@ class TradingEnv(gym.Env):
             duration = self.account.time_in_position
             margin_lost = self.account.liquidate()
             reward = -margin_lost / self.initial_balance
-            self._on_trade_completed(-margin_lost)
-            self._last_trade_duration = duration
+            self._on_trade_completed(-margin_lost, duration)
 
         # Episode length
         if self._step_count >= self.episode_length:
@@ -411,11 +408,11 @@ class TradingEnv(gym.Env):
 
     # ── Trade tracking ────────────────────────────────────────────────────
 
-    def _on_trade_completed(self, realized_pnl: float) -> None:
+    def _on_trade_completed(self, realized_pnl: float, duration: int) -> None:
         """Update trade tracking state when a position is closed."""
         self._trade_just_completed = True
         self._last_trade_pnl = realized_pnl
-        self._last_trade_duration = self.account.time_in_position
+        self._last_trade_duration = duration
         self._steps_since_last_trade = 0
         self._n_completed_trades += 1
         if realized_pnl > 0:

@@ -534,7 +534,7 @@ class TestTradingEnv:
         # Just verify the mechanism works without error
 
     def test_liquidation_triggers(self):
-        """Test that liquidation sets balance to zero and truncates."""
+        """Test that is_liquidated detects price crossing the liquidation threshold."""
         acct = Account(initial_balance=10_000.0)
         acct.open_position("long", 1.0, 20, 50_000.0)
         liq_price = calculate_liquidation_price(acct.entry_price, 20, "long")
@@ -745,3 +745,27 @@ class TestTradingEnv:
         assert acct_obs.shape == (N_ACCOUNT_FEATURES,)
         # running_win_rate (index 11) should be 0 or 1 after one trade
         assert acct_obs[11] in (0.0, 1.0)
+
+    def test_liquidation_continues_episode(self):
+        """Liquidation should not truncate the episode under isolated margin."""
+        env = _make_env()
+        env.reset(seed=0)
+
+        # Open a long position with high leverage (long, smallest size, 15x)
+        obs, reward, terminated, truncated, info = env.step(np.array([1, 0, 2]))
+
+        # Get the account state
+        balance_before = env.account.balance
+        margin = env.account.margin
+        assert margin > 0
+
+        # Directly test that liquidation via account works correctly
+        margin_lost = env.account.liquidate()
+        assert margin_lost > 0
+        assert env.account.position_side == "flat"
+        assert env.account.balance == pytest.approx(balance_before - margin_lost)
+        assert env.account.balance > 0  # Balance survives
+
+        # Continue stepping the environment - should not crash
+        obs, reward, terminated, truncated, info = env.step(np.array([0, 0, 0]))  # flat
+        assert not truncated  # Episode did not end

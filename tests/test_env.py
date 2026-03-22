@@ -474,16 +474,44 @@ class TestTradingEnv:
         assert spec.entry_point == "alphacluster.env.trading_env:TradingEnv"
 
     def test_inactivity_penalty_when_flat(self):
-        """Flat agent should receive inactivity penalty proportional to market move."""
-        env = _make_env()
+        """Flat agent should receive inactivity penalty after grace period on trends."""
+        # Use a lower start price to make percentage moves larger relative to price
+        rng = np.random.default_rng(42)
+        n_candles = 3200
+        timestamps = pd.date_range(start="2025-01-01", periods=n_candles, freq="5min", tz="UTC")
+        start_price = 100.0
+        close = start_price + np.cumsum(rng.normal(0, 1, size=n_candles))
+        close = np.maximum(close, 10.0)
+        high = close + rng.uniform(0, 2, size=n_candles)
+        low = close - rng.uniform(0, 2, size=n_candles)
+        low = np.maximum(low, 1.0)
+        opn = close + rng.normal(0, 0.5, size=n_candles)
+        opn = np.maximum(opn, 1.0)
+        volume = rng.uniform(100, 10000, size=n_candles)
+        df = pd.DataFrame(
+            {
+                "open_time": timestamps,
+                "open": opn,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+            }
+        )
+        env = TradingEnv(
+            df=df,
+            window_size=WINDOW_SIZE,
+            episode_length=200,
+            initial_balance=10_000.0,
+        )
         env.reset(seed=0)
-        # Stay flat for a few steps
+        # Stay flat past the 20-step grace period
         rewards = []
-        for _ in range(10):
+        for _ in range(50):
             _, reward, *_ = env.step([0, 0, 0])
             rewards.append(reward)
-        # Inactivity penalty should make most rewards slightly negative
-        # (unless market doesn't move)
+        # After the 20-step grace period, inactivity penalty should activate
+        # on significant trends (> 0.2%), making some rewards negative.
         assert any(r < 0 for r in rewards)
 
     def test_trade_tracking_state(self):

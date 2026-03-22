@@ -37,6 +37,7 @@ DEFAULT_REWARD_CONFIG: dict[str, float] = {
     "inactivity_penalty_scale": 1.0,
     "fee_scale": 1.0,
     "drawdown_penalty_scale": 1.0,
+    "churn_penalty_scale": 1.0,
 }
 
 
@@ -149,6 +150,7 @@ class TradingEnv(gym.Env):
         self._n_winning_trades: int = 0
         self._prev_unrealized_pnl: float = 0.0
         self._trade_just_completed: bool = False
+        self._step_fees: float = 0.0
 
     # ── Gymnasium API ────────────────────────────────────────────────────
 
@@ -181,6 +183,7 @@ class TradingEnv(gym.Env):
         self._n_winning_trades = 0
         self._prev_unrealized_pnl = 0.0
         self._trade_just_completed = False
+        self._step_fees = 0.0
 
         obs = self._get_observation()
         info = self._get_info()
@@ -257,6 +260,7 @@ class TradingEnv(gym.Env):
         self.account.update_unrealized_pnl(new_price)
 
         # ── Compute reward ─────────────────────────────────────────────
+        self._step_fees = total_fees
         reward = self._compute_reward()
         self._prev_equity = self.account.equity
 
@@ -299,10 +303,12 @@ class TradingEnv(gym.Env):
 
         Components:
         1. Asymmetric PnL reward (winners 1.5x)
-        2. Inactivity penalty (proportional to market move)
-        3. Position management reward (hold winners, cut losers)
-        4. Trade completion reward
-        5. Quadratic drawdown penalty
+        2. Fee penalty (explicit)
+        3. Inactivity penalty (trend-based with grace period)
+        4. Position management reward (hold winners, cut losers)
+        5. Trade completion reward (losing trades always negative)
+        6. Churn penalty (penalizes very short trades)
+        7. Quadratic drawdown penalty
         """
         current_equity = self.account.equity
         equity_change = current_equity - self._prev_equity
@@ -316,38 +322,71 @@ class TradingEnv(gym.Env):
         else:
             pnl_reward = pnl_norm
 
-        # 2. INACTIVITY PENALTY (opportunity cost)
-        inactivity_penalty = 0.0
-        if self.account.position_side == "flat" and self._current_idx > 0:
-            price_move = abs(self._close[self._current_idx] - self._close[self._current_idx - 1])
-            price_move_pct = price_move / max(self._close[self._current_idx - 1], 1e-12)
-            inactivity_penalty = 0.5 * price_move_pct * rc["inactivity_penalty_scale"]
+        # 2. FEE PENALTY
+        fee_penalty = (self._step_fees / self.initial_balance) * rc["fee_scale"]
 
-        # 3. POSITION MANAGEMENT REWARD
+        # 3. INACTIVITY PENALTY (trend-based with grace period)
+        inactivity_penalty = 0.0
+        if self.account.position_side == "flat" and self._steps_since_last_trade > 20:
+            lookback = min(20, self._current_idx)
+            if lookback > 0:
+                price_trend = abs(
+                    self._close[self._current_idx] - self._close[self._current_idx - lookback]
+                )
+                trend_pct = price_trend / max(self._close[self._current_idx - lookback], 1e-12)
+                if trend_pct > 0.002:
+                    inactivity_penalty = 0.3 * trend_pct * rc["inactivity_penalty_scale"]
+
+        # 4. POSITION MANAGEMENT REWARD
         position_reward = 0.0
         if self.account.position_side != "flat":
             upnl_ratio = self.account.unrealized_pnl / self.initial_balance
             if upnl_ratio > 0:
-                position_reward = 0.1 * upnl_ratio
+                hold_time_bonus = min(self.account.time_in_position / 50.0, 2.0)
+                position_reward = 0.3 * upnl_ratio * (1.0 + hold_time_bonus)
             else:
-                time_factor = 1.0 + self.account.time_in_position / 200.0
-                position_reward = 0.2 * upnl_ratio * time_factor
+                time_factor = 1.0 + self.account.time_in_position / 100.0
+                position_reward = 0.4 * upnl_ratio * time_factor
 
-        # 4. TRADE COMPLETION REWARD
+        # 5. TRADE COMPLETION REWARD
         completion_reward = 0.0
         if self._trade_just_completed:
+            trade_pnl_ratio = self._last_trade_pnl / self.initial_balance
             if self._last_trade_pnl > 0:
-                completion_reward = 0.001
-            elif self._last_trade_duration < 50:
-                completion_reward = 0.0005  # bonus for quick stop-loss
+                hold_bonus = min(self._last_trade_duration / 100.0, 1.0)
+                completion_reward = 0.005 * trade_pnl_ratio * (1.0 + hold_bonus)
+            elif self._last_trade_pnl < 0:
+                loss_penalty = 0.003 * abs(trade_pnl_ratio)
+                if self._last_trade_duration < 10:
+                    quick_cut_mitigation = 0.3
+                else:
+                    quick_cut_mitigation = 0.0
+                completion_reward = -loss_penalty * (1.0 - quick_cut_mitigation)
 
-        # 5. QUADRATIC DRAWDOWN PENALTY
+        # 6. CHURN PENALTY
+        churn_penalty = 0.0
+        if self._trade_just_completed and self._last_trade_duration < 10:
+            churn_penalty = (
+                0.002
+                * (1.0 - self._last_trade_duration / 10.0)
+                * rc.get("churn_penalty_scale", 1.0)
+            )
+
+        # 7. QUADRATIC DRAWDOWN PENALTY
         drawdown = 0.0
         if self.account.peak_equity > 0:
             drawdown = (self.account.peak_equity - current_equity) / self.account.peak_equity
         dd_penalty = 0.5 * max(0.0, drawdown) ** 2 * rc["drawdown_penalty_scale"]
 
-        reward = pnl_reward - inactivity_penalty + position_reward + completion_reward - dd_penalty
+        reward = (
+            pnl_reward
+            - fee_penalty
+            - inactivity_penalty
+            + position_reward
+            + completion_reward
+            - churn_penalty
+            - dd_penalty
+        )
         return reward
 
     # ── Trade tracking ────────────────────────────────────────────────────

@@ -121,28 +121,28 @@ class CurriculumCallback(BaseCallback):
 
     def _apply_phase(self, phase: int) -> None:
         if phase == 1:
-            ent_coef = 0.1
+            ent_coef = 0.05
             reward_config = {
-                "inactivity_penalty_scale": 2.0,
-                "fee_scale": 0.5,
+                "inactivity_penalty_scale": 0.0,
+                "fee_scale": 0.0,
                 "drawdown_penalty_scale": 0.3,
-                "churn_penalty_scale": 1.0,
+                "churn_penalty_scale": 0.0,
             }
         elif phase == 2:
             ent_coef = 0.05
             reward_config = {
-                "inactivity_penalty_scale": 1.0,
-                "fee_scale": 1.0,
+                "inactivity_penalty_scale": 0.5,
+                "fee_scale": 0.5,
                 "drawdown_penalty_scale": 1.0,
-                "churn_penalty_scale": 1.0,
+                "churn_penalty_scale": 0.5,
             }
         else:  # phase 3
             ent_coef = 0.01
             reward_config = {
-                "inactivity_penalty_scale": 0.5,
-                "fee_scale": 1.0,
+                "inactivity_penalty_scale": 1.0,
+                "fee_scale": 1.5,
                 "drawdown_penalty_scale": 1.5,
-                "churn_penalty_scale": 1.0,
+                "churn_penalty_scale": 1.5,
             }
 
         # Update agent entropy coefficient

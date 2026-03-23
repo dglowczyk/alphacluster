@@ -65,7 +65,7 @@ LEARNING_RATE = 3e-4
 BATCH_SIZE = 256
 GAMMA = 0.99  # Discount factor
 GAE_LAMBDA = 0.95  # GAE lambda for PPO
-TOTAL_TIMESTEPS = 1_000_000
+TOTAL_TIMESTEPS = 2_000_000
 N_EPOCHS = 10  # PPO epochs per update
 
 # ---------------------------------------------------------------------------

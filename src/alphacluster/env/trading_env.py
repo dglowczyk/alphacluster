@@ -38,6 +38,7 @@ DEFAULT_REWARD_CONFIG: dict[str, float] = {
     "fee_scale": 1.0,
     "drawdown_penalty_scale": 1.0,
     "churn_penalty_scale": 1.0,
+    "diversity_scale": 1.0,
 }
 
 
@@ -148,6 +149,9 @@ class TradingEnv(gym.Env):
         self._steps_since_last_trade: int = 0
         self._n_completed_trades: int = 0
         self._n_winning_trades: int = 0
+        self._n_long_trades: int = 0
+        self._n_short_trades: int = 0
+        self._last_trade_side: str = "flat"
         self._prev_unrealized_pnl: float = 0.0
         self._trade_just_completed: bool = False
         self._step_fees: float = 0.0
@@ -181,6 +185,9 @@ class TradingEnv(gym.Env):
         self._steps_since_last_trade = 0
         self._n_completed_trades = 0
         self._n_winning_trades = 0
+        self._n_long_trades = 0
+        self._n_short_trades = 0
+        self._last_trade_side = "flat"
         self._prev_unrealized_pnl = 0.0
         self._trade_just_completed = False
         self._step_fees = 0.0
@@ -224,7 +231,7 @@ class TradingEnv(gym.Env):
                 rpnl, fee = self.account.close_position(current_price)
                 realized_pnl += rpnl
                 total_fees += fee
-                self._on_trade_completed(rpnl, duration)
+                self._on_trade_completed(rpnl, duration, current_side)
             # else: no-op — already flat, no fees
         elif desired_side != current_side:
             # Close existing position first (if any)
@@ -233,7 +240,7 @@ class TradingEnv(gym.Env):
                 rpnl, fee = self.account.close_position(current_price)
                 realized_pnl += rpnl
                 total_fees += fee
-                self._on_trade_completed(rpnl, duration)
+                self._on_trade_completed(rpnl, duration, current_side)
             # Open new position (size is always > 0 now)
             fee = self.account.open_position(
                 side=desired_side,
@@ -291,11 +298,12 @@ class TradingEnv(gym.Env):
         terminated = False
 
         # Liquidation check
-        if self.account.position_side != "flat" and self.account.is_liquidated(new_price):
+        liq_side = self.account.position_side
+        if liq_side != "flat" and self.account.is_liquidated(new_price):
             duration = self.account.time_in_position
             margin_lost = self.account.liquidate()
             reward = -margin_lost / self.initial_balance
-            self._on_trade_completed(-margin_lost, duration)
+            self._on_trade_completed(-margin_lost, duration, liq_side)
 
         # Episode length
         if self._step_count >= self.episode_length:
@@ -324,8 +332,9 @@ class TradingEnv(gym.Env):
         3. Inactivity penalty (trend-based with grace period)
         4. Position management reward (hold winners, cut losers)
         5. Trade completion reward (losing trades always negative)
-        6. Churn penalty (penalizes very short trades)
+        6. Churn penalty (penalizes trades held < 20 steps)
         7. Quadratic drawdown penalty
+        8. Direction diversity bonus (annealed exploration incentive)
         """
         current_equity = self.account.equity
         equity_change = current_equity - self._prev_equity
@@ -373,20 +382,13 @@ class TradingEnv(gym.Env):
                 hold_bonus = min(self._last_trade_duration / 100.0, 1.0)
                 completion_reward = 0.005 * trade_pnl_ratio * (1.0 + hold_bonus)
             elif self._last_trade_pnl < 0:
-                loss_penalty = 0.003 * abs(trade_pnl_ratio)
-                if self._last_trade_duration < 10:
-                    quick_cut_mitigation = 0.3
-                else:
-                    quick_cut_mitigation = 0.0
-                completion_reward = -loss_penalty * (1.0 - quick_cut_mitigation)
+                completion_reward = -0.003 * abs(trade_pnl_ratio)
 
         # 6. CHURN PENALTY
         churn_penalty = 0.0
-        if self._trade_just_completed and self._last_trade_duration < 10:
+        if self._trade_just_completed and self._last_trade_duration < 20:
             churn_penalty = (
-                0.002
-                * (1.0 - self._last_trade_duration / 10.0)
-                * rc.get("churn_penalty_scale", 1.0)
+                0.01 * (1.0 - self._last_trade_duration / 20.0) * rc.get("churn_penalty_scale", 1.0)
             )
 
         # 7. QUADRATIC DRAWDOWN PENALTY
@@ -394,6 +396,20 @@ class TradingEnv(gym.Env):
         if self.account.peak_equity > 0:
             drawdown = (self.account.peak_equity - current_equity) / self.account.peak_equity
         dd_penalty = 0.5 * max(0.0, drawdown) ** 2 * rc["drawdown_penalty_scale"]
+
+        # 8. DIRECTION DIVERSITY BONUS
+        diversity_bonus = 0.0
+        if self._trade_just_completed:
+            n_long = self._n_long_trades
+            n_short = self._n_short_trades
+            total = n_long + n_short
+            if total >= 2:
+                imbalance = abs(n_long - n_short) / total
+                last_was_minority = (self._last_trade_side == "long" and n_long <= n_short) or (
+                    self._last_trade_side == "short" and n_short <= n_long
+                )
+                if last_was_minority:
+                    diversity_bonus = 0.003 * imbalance * rc.get("diversity_scale", 1.0)
 
         reward = (
             pnl_reward
@@ -403,20 +419,26 @@ class TradingEnv(gym.Env):
             + completion_reward
             - churn_penalty
             - dd_penalty
+            + diversity_bonus
         )
         return reward
 
     # ── Trade tracking ────────────────────────────────────────────────────
 
-    def _on_trade_completed(self, realized_pnl: float, duration: int) -> None:
+    def _on_trade_completed(self, realized_pnl: float, duration: int, side: str) -> None:
         """Update trade tracking state when a position is closed."""
         self._trade_just_completed = True
         self._last_trade_pnl = realized_pnl
         self._last_trade_duration = duration
+        self._last_trade_side = side
         self._steps_since_last_trade = 0
         self._n_completed_trades += 1
         if realized_pnl > 0:
             self._n_winning_trades += 1
+        if side == "long":
+            self._n_long_trades += 1
+        elif side == "short":
+            self._n_short_trades += 1
 
     # ── Observation helpers ──────────────────────────────────────────────
 

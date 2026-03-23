@@ -72,19 +72,20 @@ make tournament      # Run ELO tournament
 
 4. **Episode length**: 2016 candles (= 7 days of 5-min data).
 
-5. **Multi-component reward function** (7 components):
+5. **Multi-component reward function** (8 components):
    - Asymmetric PnL reward (winners weighted 1.5x)
    - Fee penalty (explicit trading cost awareness, scaled by `fee_scale`)
    - Inactivity penalty (trend-based with 20-step grace period, 0.2% threshold)
    - Position management reward (hold winners with time bonus up to 3x, escalating penalty for losers)
-   - Trade completion reward (PnL-scaled for winners, always negative for losers with quick-cut mitigation)
-   - Churn penalty (penalizes trades held fewer than 10 steps)
+   - Trade completion reward (PnL-scaled for winners, always negative for losers)
+   - Churn penalty (penalizes trades held fewer than 20 steps, base 0.01)
    - Quadratic drawdown penalty
+   - Direction diversity bonus (rewards trading the minority direction, annealed to 0 in Phase 3)
 
 6. **Curriculum learning** (3 phases):
-   - Phase 1 (0-30%): "Learn to Trade" — moderate entropy (0.05), zero fee/inactivity/churn penalties
-   - Phase 2 (30-70%): "Learn Quality" — moderate exploration, half-strength cost penalties
-   - Phase 3 (70-100%): "Refine & Exploit" — low entropy, amplified fee (1.5x) and churn (1.5x) penalties
+   - Phase 1 (0-30%): "Learn to Trade" — moderate entropy (0.05), partial fee (0.2) and churn (0.3) penalties, full diversity bonus
+   - Phase 2 (30-70%): "Learn Quality" — moderate exploration, half-strength cost penalties, half diversity bonus
+   - Phase 3 (70-100%): "Refine & Exploit" — low entropy, amplified fee (1.5x) and churn (1.5x) penalties, diversity bonus annealed to 0
 
 7. **CNN+Transformer feature extractor**: 2 Conv1d layers compress (576, 19) → (144, 128), then 3-layer Transformer encoder (4 heads, d_model=128) with learnable positional encoding, adaptive pooling to 128-dim. Account MLP outputs 64-dim. Total: 192-dim feature vector.
 

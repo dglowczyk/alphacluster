@@ -124,9 +124,10 @@ class CurriculumCallback(BaseCallback):
             ent_coef = 0.05
             reward_config = {
                 "inactivity_penalty_scale": 0.0,
-                "fee_scale": 0.0,
+                "fee_scale": 0.2,
                 "drawdown_penalty_scale": 0.3,
-                "churn_penalty_scale": 0.0,
+                "churn_penalty_scale": 0.3,
+                "diversity_scale": 1.0,
             }
         elif phase == 2:
             ent_coef = 0.05
@@ -135,6 +136,7 @@ class CurriculumCallback(BaseCallback):
                 "fee_scale": 0.5,
                 "drawdown_penalty_scale": 1.0,
                 "churn_penalty_scale": 0.5,
+                "diversity_scale": 0.5,
             }
         else:  # phase 3
             ent_coef = 0.01
@@ -143,6 +145,7 @@ class CurriculumCallback(BaseCallback):
                 "fee_scale": 1.5,
                 "drawdown_penalty_scale": 1.5,
                 "churn_penalty_scale": 1.5,
+                "diversity_scale": 0.0,
             }
 
         # Update agent entropy coefficient

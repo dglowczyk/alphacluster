@@ -11,7 +11,7 @@ Training metrics show clear progression:
 - 200k-800k: trade duration collapses to ~2 steps, flat_pct rises to 64%
 - 850k-1M: full capitulation — 0 trades, 100% flat
 
-Manual scale tuning is impractical with 11 interacting parameters.
+Manual scale tuning is impractical with 11+ interacting parameters.
 
 ## Solution
 
@@ -19,21 +19,34 @@ A Colab notebook using **Optuna (TPE sampler + MedianPruner)** for automated
 Bayesian hyperparameter optimization of reward scales, curriculum multipliers,
 and PPO hyperparameters.
 
-## Parameter Space (11 dimensions)
+## Configuration Source
 
-### Reward Scales (6)
+The tuning notebook uses `TrainingConfig` from `agent/config.py` as the single
+source of truth (gamma=0.995, batch_size=128). Values in the top-level `config.py`
+(gamma=0.99, batch_size=256) are legacy defaults used only by the CLI and are not
+relevant to the tuning notebook.
+
+## Parameter Space (13 dimensions)
+
+### Reward Scales (8)
 
 | Parameter | Range | Scale | Current Default |
 |-----------|-------|-------|-----------------|
 | `fee_scale` | 0.1 – 2.0 | uniform | 1.0 |
 | `opportunity_cost_scale` | 0.1 – 2.0 | uniform | 0.5 |
 | `opportunity_cost_cap` | 0.01 – 0.15 | uniform | 0.02 (hardcoded) |
+| `opportunity_cost_threshold` | 0.001 – 0.005 | uniform | 0.002 (hardcoded) |
 | `churn_penalty_scale` | 0.1 – 2.0 | uniform | 1.0 |
 | `drawdown_penalty_scale` | 0.1 – 2.0 | uniform | 1.0 |
 | `quality_scale` | 0.1 – 2.0 | uniform | 1.0 |
+| `position_mgmt_scale` | 0.1 – 2.0 | uniform | 1.0 (new, wraps 0.4 coeff) |
 
-Note: `opportunity_cost_cap` is currently hardcoded in `trading_env.py` (line ~362).
-It must be made configurable via `reward_config` dict to be tunable.
+Notes:
+- `opportunity_cost_cap` is hardcoded at 0.02 in `trading_env.py` — must be
+  extracted to `reward_config`.
+- `opportunity_cost_threshold` is hardcoded at 0.002 — also extracted.
+- `position_mgmt_scale` is a new scale that wraps the hardcoded 0.4 coefficient
+  in the position management reward: `position_reward = 0.4 * scale * ...`
 
 ### Curriculum Phase 3 Multipliers (2)
 
@@ -43,38 +56,79 @@ It must be made configurable via `reward_config` dict to be tunable.
 | `phase3_churn_multiplier` | 1.0 – 3.0 | uniform | 2.0 |
 
 These multiply the base `fee_scale` and `churn_penalty_scale` in Phase 3.
-Phase 1 and Phase 2 multipliers remain fixed (Phase 1: 0.5x, Phase 2: 1.0x).
+
+**Full curriculum phase computation:**
+
+The `CurriculumCallback` will be refactored to accept base scales and compute
+phase-specific configs using fixed phase multiplier vectors:
+
+```
+Phase 1 multipliers: {fee: 0.5, churn: 0.5, opp: 0.3, dd: 0.3, quality: 1.0, pos_mgmt: 1.0}
+Phase 2 multipliers: {fee: 1.0, churn: 1.0, opp: 1.0, dd: 1.0, quality: 1.0, pos_mgmt: 1.0}
+Phase 3 multipliers: {fee: phase3_fee_mult, churn: phase3_churn_mult,
+                       opp: 1.0, dd: 1.5, quality: 0.5, pos_mgmt: 1.0}
+```
+
+Phase config = base_scale × phase_multiplier for each component.
 
 ### PPO Hyperparameters (3)
 
 | Parameter | Range | Scale | Current Default |
 |-----------|-------|-------|-----------------|
 | `learning_rate` | 1e-4 – 1e-3 | log-uniform | 3e-4 |
-| `ent_coef` | 0.01 – 0.1 | log-uniform | 0.05 |
+| `ent_coef_phase1` | 0.01 – 0.1 | log-uniform | 0.05 |
 | `gamma` | 0.99 – 0.999 | uniform | 0.995 |
+
+Note on `ent_coef`: The curriculum callback overrides entropy at each phase.
+We tune `ent_coef_phase1` and derive Phase 2/3 as fixed fractions:
+- Phase 1: `ent_coef_phase1` (sampled)
+- Phase 2: `ent_coef_phase1 * 0.6`
+- Phase 3: `ent_coef_phase1 * 0.1`
+
+This preserves the decreasing exploration schedule while making it tunable.
 
 ## Objective Function
 
 ### Composite Score
 
 ```python
-score = total_pnl_pct * 0.4 + trades_norm * 0.3 + win_rate_norm * 0.3
+pnl_norm = np.clip(total_pnl_pct, -50, 50) / 100 + 0.5  # normalized to 0-1
+trades_norm = min(trades_per_episode, 200) / 200           # normalized to 0-1
+win_rate_norm = win_rate / 100                              # normalized to 0-1
+
+score = pnl_norm * 0.4 + trades_norm * 0.3 + win_rate_norm * 0.3
 ```
 
-Where:
-- `total_pnl_pct` — raw total PnL percentage from backtest
-- `trades_norm` — `min(trades_per_episode, 200) / 200` (normalized 0-1)
-- `win_rate_norm` — `win_rate / 100` (normalized 0-1)
+All three terms are on the 0-1 scale, so weights reflect true relative importance.
 
 ### Hard Constraints (trial rejected → score = -1000)
 
-- `flat_pct > 80%` — agent has collapsed into flat
-- `trades_per_episode < 10` — insufficient trading activity
+- `flat_pct > 70%` — agent has largely collapsed into flat
+- `trades_per_episode < 20` — insufficient trading activity
+- `avg_trade_duration < 1.5` — pure churn, not real trading
 
 ### Evaluation
 
-Score is computed from `TrainingMetricsCallback` output at the final timestep.
+Score is computed from the **last row** of the `TrainingMetricsCallback` CSV
+(regardless of which timestep it corresponds to — handles pruned trials correctly).
 Uses `n_episodes=3` with `seed=42` for deterministic comparison.
+
+### Error Handling
+
+The objective function wraps the entire trial in try/except. On crash (OOM, NaN,
+environment error):
+- Returns score = -1000
+- Stores error message in `trial.set_user_attr("error", str(e))`
+- Logs the error for debugging
+
+## VecNormalize Interaction
+
+**Reward normalization is DISABLED** during tuning trials (`norm_reward=False`).
+Since we are tuning reward scales directly, VecNormalize reward normalization
+would partially undo scale changes, making the search ineffective.
+
+Observation normalization (`norm_obs=True`) remains enabled as it helps training
+stability without interfering with reward scale tuning.
 
 ## Two-Phase Strategy
 
@@ -89,6 +143,8 @@ Uses `n_episodes=3` with `seed=42` for deterministic comparison.
   - After 10 trials, prune at 100k if intermediate score < median
 - **Intermediate reporting:** Score reported at 100k and 200k steps via
   Optuna `trial.report()` + `trial.should_prune()`
+- **Metrics log_freq:** Set to 100,000 (aligned with pruning warmup) to ensure
+  CSV has a row at exactly 100k for intermediate reporting
 
 ### Phase 2: Validation (500k steps × top 10)
 
@@ -98,6 +154,7 @@ Uses `n_episodes=3` with `seed=42` for deterministic comparison.
 - **Trials:** 10 (fixed params, no Optuna sampling)
 - **Estimated time:** ~5 hours
 - **No pruning** — all trials run to completion
+- **Metrics log_freq:** 100,000 (5 data points per trial for learning curve)
 
 ### Total estimated time: ~13 hours
 
@@ -106,14 +163,14 @@ Uses `n_episodes=3` with `seed=42` for deterministic comparison.
 ### Cell 1 — Setup & Dependencies
 
 ```
-!pip install optuna optuna-dashboard plotly kaleido
+!pip install optuna plotly kaleido
 ```
 
 Mount Google Drive. Define paths:
-- `DRIVE_DIR = "/content/drive/MyDrive/AlphaCluster/optuna_tuning/"`
-- `STUDY_DB = DRIVE_DIR + "optuna_study.db"` (SQLite, Optuna native persistence)
-- `RESULTS_CSV = DRIVE_DIR + "trial_results.csv"`
-- `BEST_PARAMS_JSON = DRIVE_DIR + "best_params.json"`
+- `DRIVE_DIR = Path("/content/drive/MyDrive/AlphaCluster/optuna_tuning/")`
+- `STUDY_DB = DRIVE_DIR / "optuna_study.db"` (SQLite, Optuna native persistence)
+- `RESULTS_CSV = DRIVE_DIR / "trial_results.csv"`
+- `BEST_PARAMS_JSON = DRIVE_DIR / "best_params.json"`
 
 ### Cell 2 — Install AlphaCluster & Load Data
 
@@ -123,40 +180,66 @@ Clone repo, install package, load and split data (same as colab_train.ipynb).
 
 ```python
 def objective(trial: optuna.Trial) -> float:
-    # Sample 11 parameters
-    fee_scale = trial.suggest_float("fee_scale", 0.1, 2.0)
-    opportunity_cost_scale = trial.suggest_float("opportunity_cost_scale", 0.1, 2.0)
-    opportunity_cost_cap = trial.suggest_float("opportunity_cost_cap", 0.01, 0.15)
-    churn_penalty_scale = trial.suggest_float("churn_penalty_scale", 0.1, 2.0)
-    drawdown_penalty_scale = trial.suggest_float("drawdown_penalty_scale", 0.1, 2.0)
-    quality_scale = trial.suggest_float("quality_scale", 0.1, 2.0)
-    phase3_fee_mult = trial.suggest_float("phase3_fee_multiplier", 1.0, 3.0)
-    phase3_churn_mult = trial.suggest_float("phase3_churn_multiplier", 1.0, 3.0)
-    lr = trial.suggest_float("learning_rate", 1e-4, 1e-3, log=True)
-    ent = trial.suggest_float("ent_coef", 0.01, 0.1, log=True)
-    gamma = trial.suggest_float("gamma", 0.99, 0.999)
+    try:
+        # Sample 13 parameters
+        fee_scale = trial.suggest_float("fee_scale", 0.1, 2.0)
+        opportunity_cost_scale = trial.suggest_float("opportunity_cost_scale", 0.1, 2.0)
+        opportunity_cost_cap = trial.suggest_float("opportunity_cost_cap", 0.01, 0.15)
+        opportunity_cost_threshold = trial.suggest_float(
+            "opportunity_cost_threshold", 0.001, 0.005,
+        )
+        churn_penalty_scale = trial.suggest_float("churn_penalty_scale", 0.1, 2.0)
+        drawdown_penalty_scale = trial.suggest_float("drawdown_penalty_scale", 0.1, 2.0)
+        quality_scale = trial.suggest_float("quality_scale", 0.1, 2.0)
+        position_mgmt_scale = trial.suggest_float("position_mgmt_scale", 0.1, 2.0)
+        phase3_fee_mult = trial.suggest_float("phase3_fee_multiplier", 1.0, 3.0)
+        phase3_churn_mult = trial.suggest_float("phase3_churn_multiplier", 1.0, 3.0)
+        lr = trial.suggest_float("learning_rate", 1e-4, 1e-3, log=True)
+        ent = trial.suggest_float("ent_coef_phase1", 0.01, 0.1, log=True)
+        gamma = trial.suggest_float("gamma", 0.99, 0.999)
 
-    # Build reward_config for each curriculum phase
-    # Phase 1: base scales × 0.5 (fee, churn), 0.3 (opp, dd)
-    # Phase 2: base scales × 1.0
-    # Phase 3: base scales × phase3 multipliers
+        # Build base reward_config
+        base_reward_config = {
+            "fee_scale": fee_scale,
+            "opportunity_cost_scale": opportunity_cost_scale,
+            "opportunity_cost_cap": opportunity_cost_cap,
+            "opportunity_cost_threshold": opportunity_cost_threshold,
+            "churn_penalty_scale": churn_penalty_scale,
+            "drawdown_penalty_scale": drawdown_penalty_scale,
+            "quality_scale": quality_scale,
+            "position_mgmt_scale": position_mgmt_scale,
+        }
 
-    # Create env with sampled reward_config
-    # Create PPO agent with sampled lr, ent_coef, gamma
-    # Train for N timesteps with pruning callback
+        # Build curriculum config with phase multipliers
+        curriculum_config = {
+            "base_reward_config": base_reward_config,
+            "phase3_fee_multiplier": phase3_fee_mult,
+            "phase3_churn_multiplier": phase3_churn_mult,
+            "ent_coef_phase1": ent,
+        }
 
-    # Read training_metrics.csv, compute score
-    # Apply hard constraints
-    # Return score
+        # Create env, agent, train, evaluate
+        # ...read last row of metrics CSV, compute score
+        # Apply hard constraints (flat_pct > 70%, trades < 20, duration < 1.5)
+
+    except Exception as e:
+        trial.set_user_attr("error", str(e))
+        logger.exception("Trial %d failed: %s", trial.number, e)
+        return -1000.0
+
+    return score
 ```
 
 ### Cell 4 — Pruning Callback
 
 Custom SB3 callback that:
-1. Reads `TrainingMetricsCallback` CSV at checkpoints (100k, 200k)
+1. Reads last row of `TrainingMetricsCallback` CSV at checkpoints
 2. Computes intermediate score
 3. Reports to `trial.report(score, step)`
 4. Raises `optuna.TrialPruned()` if `trial.should_prune()`
+
+Registered AFTER `TrainingMetricsCallback` to ensure CSV is written first
+(SB3 executes callbacks in registration order).
 
 ### Cell 5 — Phase 1: Screening
 
@@ -188,12 +271,16 @@ Key: `load_if_exists=True` allows resuming if Colab disconnects.
 
 ```python
 # Extract top 10 param sets from Phase 1
-top_params = sorted(study.trials, key=lambda t: t.value or -inf, reverse=True)[:10]
+top_params = sorted(
+    [t for t in study.trials if t.value is not None and t.value > -999],
+    key=lambda t: t.value,
+    reverse=True,
+)[:10]
 
 # Run each with 500k timesteps (no pruning)
 validation_results = []
-for i, trial in enumerate(top_params):
-    result = run_validation_trial(trial.params, timesteps=500_000)
+for i, trial_data in enumerate(top_params):
+    result = run_validation_trial(trial_data.params, timesteps=500_000)
     validation_results.append(result)
     # Save incrementally to Drive
 ```
@@ -208,36 +295,65 @@ for i, trial in enumerate(top_params):
 
 ### Cell 9 — Apply Best Parameters (Optional)
 
-Template cell to copy best params into a training run:
-```python
-# Copy-paste these into your training config
-best_reward_config = json.load(open(BEST_PARAMS_JSON))
-print(f"Recommended config:\n{json.dumps(best_reward_config, indent=2)}")
-```
+Template cell showing best params and how to apply them to `TrainingConfig`.
 
 ## Required Code Changes
 
-### 1. Make `opportunity_cost_cap` configurable
+### 1. Make `opportunity_cost_cap` and `opportunity_cost_threshold` configurable
 
-In `trading_env.py`, change:
+In `trading_env.py`, extract hardcoded values to `reward_config`:
 ```python
 # Before (hardcoded):
-opportunity_penalty = min(raw_penalty, 0.02) * rc["opportunity_cost_scale"]
+if price_change > 0.002:
+    raw_penalty = price_change - 0.002
+    opportunity_penalty = min(raw_penalty, 0.02) * rc["opportunity_cost_scale"]
 
 # After (configurable):
+opp_threshold = rc.get("opportunity_cost_threshold", 0.002)
 opp_cap = rc.get("opportunity_cost_cap", 0.02)
-opportunity_penalty = min(raw_penalty, opp_cap) * rc["opportunity_cost_scale"]
+if price_change > opp_threshold:
+    raw_penalty = price_change - opp_threshold
+    opportunity_penalty = min(raw_penalty, opp_cap) * rc["opportunity_cost_scale"]
 ```
 
-### 2. Make curriculum phases accept dynamic multipliers
+### 2. Add `position_mgmt_scale` to reward computation
 
-The `CurriculumCallback` currently hardcodes phase multipliers. It needs to
-accept base scales and phase multipliers as constructor parameters so the
-objective function can override them.
+```python
+# Before:
+position_reward = 0.4 * upnl_ratio * (1.0 + hold_time_bonus)
 
-### 3. TrainingMetricsCallback — expose via module __init__
+# After:
+pos_scale = rc.get("position_mgmt_scale", 1.0)
+position_reward = 0.4 * pos_scale * upnl_ratio * (1.0 + hold_time_bonus)
+```
 
-Already implemented, just ensure it's importable from the notebook.
+Apply same scale to the losing-position branch.
+
+### 3. Refactor CurriculumCallback to accept dynamic base scales
+
+Constructor accepts:
+- `base_reward_config: dict` — base scales for all reward components
+- `phase3_fee_multiplier: float` — Phase 3 fee scale multiplier
+- `phase3_churn_multiplier: float` — Phase 3 churn scale multiplier
+- `ent_coef_phase1: float` — Phase 1 entropy (Phase 2 = 0.6x, Phase 3 = 0.1x)
+
+`_apply_phase()` computes phase config as base_scale × phase_multiplier.
+
+### 4. Update DEFAULT_REWARD_CONFIG
+
+Add new keys with backward-compatible defaults:
+```python
+DEFAULT_REWARD_CONFIG: dict[str, float] = {
+    "opportunity_cost_scale": 0.5,
+    "opportunity_cost_cap": 0.02,
+    "opportunity_cost_threshold": 0.002,
+    "fee_scale": 1.0,
+    "drawdown_penalty_scale": 1.0,
+    "churn_penalty_scale": 1.0,
+    "quality_scale": 1.0,
+    "position_mgmt_scale": 1.0,
+}
+```
 
 ## Persistence & Recovery
 
@@ -254,11 +370,22 @@ All artifacts saved to Google Drive for durability:
 `load_if_exists=True` on the Optuna study enables seamless resume after
 Colab disconnection — the study picks up from the last completed trial.
 
+## Known Limitations
+
+- **Single seed per trial:** RL training has high variance. A configuration that
+  scores well on one seed may fail on another. Phase 2 uses a single seed for
+  time reasons. If results look promising but inconsistent, consider re-running
+  top 3 configs with 3 seeds each.
+- **200k screening may miss slow-converging configs:** Some parameter sets might
+  look bad at 200k but converge well at 1M+. The Phase 2 validation at 500k
+  partially mitigates this.
+- **13 parameters with 40 trials:** TPE will still be partially exploring at
+  trial 40. The study can be continued with additional trials if needed.
+
 ## Dependencies
 
 New pip packages for the tuning notebook:
 - `optuna>=3.0` — Bayesian optimization framework
-- `optuna-dashboard` — optional, for interactive visualization
 - `plotly` — Optuna's built-in visualization backend
 - `kaleido` — static image export for Plotly charts
 

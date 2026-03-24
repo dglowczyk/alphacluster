@@ -34,7 +34,7 @@ _FUNDING_HOURS = (0, 8, 16)  # UTC hours at which funding is applied
 
 # Default reward configuration — can be overridden by CurriculumCallback
 DEFAULT_REWARD_CONFIG: dict[str, float] = {
-    "inactivity_penalty_scale": 0.0,
+    "opportunity_cost_scale": 0.5,
     "fee_scale": 1.0,
     "drawdown_penalty_scale": 1.0,
     "churn_penalty_scale": 1.0,
@@ -328,11 +328,11 @@ class TradingEnv(gym.Env):
 
         Components:
         1. Asymmetric PnL reward (winners 1.5x)
-        2. Fee penalty (2x base weight)
-        3. Inactivity penalty (disabled by default)
+        2. Fee penalty (scaled by fee_scale)
+        3. Opportunity cost (market-driven penalty for being flat during trends)
         4. Position management reward (sqrt ramp for winners, cut losers)
         5. Trade completion reward (quadratic duration scaling)
-        6. Churn penalty (quadratic, threshold 30 steps)
+        6. Churn penalty (quadratic, base=0.02, threshold=20)
         7. Quadratic drawdown penalty
         8. Trade quality bonus (per-step profitability for winners)
         """
@@ -348,20 +348,20 @@ class TradingEnv(gym.Env):
         else:
             pnl_reward = pnl_norm
 
-        # 2. FEE PENALTY (2x base weight to make trading costs more visible)
-        fee_penalty = (self._step_fees / self.initial_balance) * rc["fee_scale"] * 2.0
+        # 2. FEE PENALTY (scaled by curriculum fee_scale)
+        fee_penalty = (self._step_fees / self.initial_balance) * rc["fee_scale"]
 
-        # 3. INACTIVITY PENALTY (trend-based with grace period)
-        inactivity_penalty = 0.0
-        if self.account.position_side == "flat" and self._steps_since_last_trade > 20:
-            lookback = min(20, self._current_idx)
+        # 3. OPPORTUNITY COST (replaces inactivity penalty)
+        opportunity_penalty = 0.0
+        if self.account.position_side == "flat":
+            lookback = min(10, self._current_idx - self._start_idx)
             if lookback > 0:
-                price_trend = abs(
+                price_change = abs(
                     self._close[self._current_idx] - self._close[self._current_idx - lookback]
-                )
-                trend_pct = price_trend / max(self._close[self._current_idx - lookback], 1e-12)
-                if trend_pct > 0.002:
-                    inactivity_penalty = 0.3 * trend_pct * rc["inactivity_penalty_scale"]
+                ) / max(self._close[self._current_idx - lookback], 1e-12)
+                if price_change > 0.002:
+                    raw_penalty = price_change - 0.002
+                    opportunity_penalty = min(raw_penalty, 0.02) * rc["opportunity_cost_scale"]
 
         # 4. POSITION MANAGEMENT REWARD (sqrt ramp for winners)
         position_reward = 0.0
@@ -385,11 +385,11 @@ class TradingEnv(gym.Env):
                 loser_duration_factor = min(10.0 / max(self._last_trade_duration, 1), 3.0)
                 completion_reward = -0.005 * abs(trade_pnl_ratio) * loser_duration_factor
 
-        # 6. CHURN PENALTY (quadratic, 5x stronger, threshold 30)
+        # 6. CHURN PENALTY (quadratic, base=0.02, threshold=20)
         churn_penalty = 0.0
-        if self._trade_just_completed and self._last_trade_duration < 30:
-            fraction_remaining = 1.0 - self._last_trade_duration / 30.0
-            churn_penalty = 0.05 * fraction_remaining**2 * rc.get("churn_penalty_scale", 1.0)
+        if self._trade_just_completed and self._last_trade_duration < 20:
+            fraction_remaining = 1.0 - self._last_trade_duration / 20.0
+            churn_penalty = 0.02 * fraction_remaining**2 * rc.get("churn_penalty_scale", 1.0)
 
         # 7. QUADRATIC DRAWDOWN PENALTY
         drawdown = 0.0
@@ -408,7 +408,7 @@ class TradingEnv(gym.Env):
         reward = (
             pnl_reward
             - fee_penalty
-            - inactivity_penalty
+            - opportunity_penalty
             + position_reward
             + completion_reward
             - churn_penalty

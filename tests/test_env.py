@@ -660,57 +660,6 @@ class TestTradingEnv:
         assert spec is not None
         assert spec.entry_point == "alphacluster.env.trading_env:TradingEnv"
 
-    def test_inactivity_penalty_when_flat(self):
-        """Inactivity penalty is disabled by default (scale=0.0).
-
-        When explicitly enabled, flat agent should receive penalty after grace period.
-        """
-        rng = np.random.default_rng(42)
-        n_candles = 3200
-        timestamps = pd.date_range(start="2025-01-01", periods=n_candles, freq="5min", tz="UTC")
-        start_price = 100.0
-        close = start_price + np.cumsum(rng.normal(0, 1, size=n_candles))
-        close = np.maximum(close, 10.0)
-        high = close + rng.uniform(0, 2, size=n_candles)
-        low = close - rng.uniform(0, 2, size=n_candles)
-        low = np.maximum(low, 1.0)
-        opn = close + rng.normal(0, 0.5, size=n_candles)
-        opn = np.maximum(opn, 1.0)
-        volume = rng.uniform(100, 10000, size=n_candles)
-        df = pd.DataFrame(
-            {
-                "open_time": timestamps,
-                "open": opn,
-                "high": high,
-                "low": low,
-                "close": close,
-                "volume": volume,
-            }
-        )
-        env = TradingEnv(
-            df=df,
-            window_size=WINDOW_SIZE,
-            episode_length=200,
-            initial_balance=10_000.0,
-        )
-        env.reset(seed=0)
-
-        # Default: inactivity penalty disabled — staying flat should yield zero rewards
-        rewards_default = []
-        for _ in range(50):
-            _, reward, *_ = env.step([0, 0, 0])
-            rewards_default.append(reward)
-        assert all(r == 0.0 for r in rewards_default)
-
-        # When explicitly enabled, penalty should activate on trends
-        env.reset(seed=0)
-        env.reward_config["inactivity_penalty_scale"] = 1.0
-        rewards_enabled = []
-        for _ in range(50):
-            _, reward, *_ = env.step([0, 0, 0])
-            rewards_enabled.append(reward)
-        assert any(r < 0 for r in rewards_enabled)
-
     def test_trade_tracking_state(self):
         """Trade tracking state should update when positions are closed."""
         env = _make_env()
@@ -727,8 +676,8 @@ class TestTradingEnv:
         """reward_config should be changeable for curriculum learning."""
         env = _make_env()
         env.reset(seed=0)
-        env.reward_config["quality_scale"] = 2.0
-        assert env.reward_config["quality_scale"] == 2.0
+        env.reward_config["opportunity_cost_scale"] = 2.0
+        assert env.reward_config["opportunity_cost_scale"] == 2.0
         env.reward_config["churn_penalty_scale"] = 0.5
         assert env.reward_config["churn_penalty_scale"] == 0.5
 
@@ -841,3 +790,231 @@ def test_model_version_exists():
 
     assert isinstance(MODEL_VERSION, str)
     assert len(MODEL_VERSION) > 0
+
+
+class TestOpportunityCost:
+    """Tests for the opportunity cost reward component."""
+
+    def _make_trending_env(self, trend_pct: float = 0.005, n_candles: int = 3200):
+        """Create env with a clear directional trend over the lookback window."""
+        rng = np.random.default_rng(42)
+        timestamps = pd.date_range(start="2025-01-01", periods=n_candles, freq="5min", tz="UTC")
+        base_price = 80_000.0
+        step_size = base_price * trend_pct / 20
+        close = base_price + np.arange(n_candles) * step_size
+        close = close + rng.normal(0, 0.5, size=n_candles)
+        high = close + rng.uniform(0, 5, size=n_candles)
+        low = close - rng.uniform(0, 5, size=n_candles)
+        low = np.maximum(low, 1.0)
+        opn = close + rng.normal(0, 1, size=n_candles)
+        opn = np.maximum(opn, 1.0)
+        volume = rng.uniform(100, 10000, size=n_candles)
+        df = pd.DataFrame(
+            {
+                "open_time": timestamps,
+                "open": opn,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+            }
+        )
+        return TradingEnv(
+            df=df,
+            window_size=WINDOW_SIZE,
+            episode_length=200,
+            initial_balance=10_000.0,
+        )
+
+    def test_opportunity_cost_when_flat_during_trend(self):
+        """Flat agent during >0.2% trend should receive negative opportunity cost."""
+        env = self._make_trending_env(trend_pct=0.01)
+        env.reset(seed=0)
+        rewards = []
+        for _ in range(15):
+            _, reward, *_ = env.step([0, 0, 0])
+            rewards.append(reward)
+        assert any(r < 0 for r in rewards[10:])
+
+    def test_opportunity_cost_zero_during_consolidation(self):
+        """Flat agent during sideways market (<0.2% change) should get no penalty."""
+        rng = np.random.default_rng(42)
+        n_candles = 3200
+        timestamps = pd.date_range(start="2025-01-01", periods=n_candles, freq="5min", tz="UTC")
+        close = 80_000.0 + rng.normal(0, 5, size=n_candles)
+        close = np.maximum(close, 79_000.0)
+        high = close + rng.uniform(0, 2, size=n_candles)
+        low = close - rng.uniform(0, 2, size=n_candles)
+        opn = close + rng.normal(0, 1, size=n_candles)
+        opn = np.maximum(opn, 1.0)
+        volume = rng.uniform(100, 10000, size=n_candles)
+        df = pd.DataFrame(
+            {
+                "open_time": timestamps,
+                "open": opn,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+            }
+        )
+        env = TradingEnv(
+            df=df,
+            window_size=WINDOW_SIZE,
+            episode_length=200,
+            initial_balance=10_000.0,
+        )
+        env.reset(seed=0)
+        rewards = []
+        for _ in range(20):
+            _, reward, *_ = env.step([0, 0, 0])
+            rewards.append(reward)
+        assert all(r == pytest.approx(0.0, abs=1e-9) for r in rewards)
+
+    def test_opportunity_cost_zero_when_in_position(self):
+        """Agent holding a position should not receive opportunity cost."""
+        env = self._make_trending_env(trend_pct=0.01)
+        env.reset(seed=0)
+        flat_rewards = []
+        for _ in range(15):
+            _, r, *_ = env.step([0, 0, 0])
+            flat_rewards.append(r)
+
+        env.reset(seed=0)
+        env.step([1, 1, 0])
+        position_rewards = []
+        for _ in range(14):
+            _, r, *_ = env.step([1, 1, 0])
+            position_rewards.append(r)
+
+        assert sum(flat_rewards[10:]) < 0, "Flat during trend should be penalized"
+        assert sum(position_rewards[10:]) > sum(flat_rewards[10:])
+
+    def test_opportunity_cost_at_episode_start(self):
+        """First 10 steps should clamp lookback, no crash."""
+        env = self._make_trending_env(trend_pct=0.01)
+        env.reset(seed=0)
+        for _ in range(10):
+            _, reward, terminated, *_ = env.step([0, 0, 0])
+            assert not terminated
+
+    def test_opportunity_cost_capped(self):
+        """During large moves (>2%), penalty should cap at 0.02 * scale."""
+        rng = np.random.default_rng(42)
+        n_candles = 3200
+        timestamps = pd.date_range(start="2025-01-01", periods=n_candles, freq="5min", tz="UTC")
+        base = 80_000.0
+        close = np.full(n_candles, base)
+        for i in range(590, 600):
+            close[i] = base + (i - 589) * base * 0.005
+        for i in range(600, n_candles):
+            close[i] = base * 1.05
+        high = close + 10
+        low = close - 10
+        low = np.maximum(low, 1.0)
+        opn = close.copy()
+        volume = rng.uniform(100, 10000, size=n_candles)
+        df = pd.DataFrame(
+            {
+                "open_time": timestamps,
+                "open": opn,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+            }
+        )
+        env = TradingEnv(
+            df=df,
+            window_size=WINDOW_SIZE,
+            episode_length=200,
+            initial_balance=10_000.0,
+        )
+        env.reset(seed=0)
+        rewards = []
+        for _ in range(30):
+            _, reward, *_ = env.step([0, 0, 0])
+            rewards.append(reward)
+        # Cap is 0.02 * scale (default 0.5) = 0.01
+        for r in rewards:
+            assert r >= -0.01 - 1e-9
+
+    def test_opportunity_cost_exact_threshold(self):
+        """Price change of exactly 0.2% should produce zero penalty."""
+        rng = np.random.default_rng(42)
+        n_candles = 3200
+        timestamps = pd.date_range(start="2025-01-01", periods=n_candles, freq="5min", tz="UTC")
+        base = 80_000.0
+        close = np.full(n_candles, base, dtype=np.float64)
+        for i in range(577, 587):
+            close[i] = base * (1.0 + 0.002 * (i - 576) / 10)
+        for i in range(587, n_candles):
+            close[i] = base * 1.002
+        high = close + 5
+        low = close - 5
+        low = np.maximum(low, 1.0)
+        opn = close.copy()
+        volume = rng.uniform(100, 10000, size=n_candles)
+        df = pd.DataFrame(
+            {
+                "open_time": timestamps,
+                "open": opn,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+            }
+        )
+        env = TradingEnv(
+            df=df,
+            window_size=WINDOW_SIZE,
+            episode_length=200,
+            initial_balance=10_000.0,
+        )
+        env.reset(seed=0)
+        rewards = []
+        for _ in range(20):
+            _, r, *_ = env.step([0, 0, 0])
+            rewards.append(r)
+        assert all(r >= -1e-9 for r in rewards)
+
+    def test_trading_beats_flat_during_trend(self):
+        """Opening a position during a trend should beat staying flat."""
+        env_flat = self._make_trending_env(trend_pct=0.005)
+        env_flat.reset(seed=0)
+        flat_rewards = []
+        for _ in range(15):
+            _, r, *_ = env_flat.step([0, 0, 0])
+            flat_rewards.append(r)
+
+        env_trade = self._make_trending_env(trend_pct=0.005)
+        env_trade.reset(seed=0)
+        trade_rewards = []
+        _, r, *_ = env_trade.step([1, 1, 0])
+        trade_rewards.append(r)
+        for _ in range(14):
+            _, r, *_ = env_trade.step([1, 1, 0])
+            trade_rewards.append(r)
+
+        assert sum(trade_rewards) > sum(flat_rewards)
+
+
+def test_churn_penalty_rebalanced():
+    """Churn penalty with base=0.02, threshold=20."""
+    env = _make_env()
+    env.reset(seed=0)
+
+    env._trade_just_completed = True
+    env._last_trade_duration = 1
+    env._last_trade_pnl = 0.0
+    env._step_fees = 0.0
+    r1 = env._compute_reward()
+
+    env._last_trade_duration = 10
+    r10 = env._compute_reward()
+
+    env._last_trade_duration = 20
+    r20 = env._compute_reward()
+
+    assert r1 < r10
+    assert r20 >= r10

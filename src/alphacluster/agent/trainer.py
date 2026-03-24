@@ -88,13 +88,13 @@ class CurriculumCallback(BaseCallback):
     """Adjusts reward parameters and entropy coefficient across training phases.
 
     Phase 1 — "Learn to Trade" (0–30%):
-        High exploration, strong inactivity penalty, lenient drawdowns.
+        Moderate exploration, early fee/churn awareness.
 
-    Phase 2 — "Learn Quality" (30–70%):
-        Moderate exploration, normal penalties.
+    Phase 2 — "Learn Quality" (30–60%):
+        Reduced exploration, full cost penalties.
 
-    Phase 3 — "Refine & Exploit" (70–100%):
-        Low exploration, strict drawdown penalties.
+    Phase 3 — "Refine & Exploit" (60–100%):
+        Low exploration, strict fee/churn/drawdown penalties.
     """
 
     def __init__(self, config: TrainingConfig, verbose: int = 0) -> None:
@@ -124,28 +124,28 @@ class CurriculumCallback(BaseCallback):
             ent_coef = 0.05
             reward_config = {
                 "inactivity_penalty_scale": 0.0,
-                "fee_scale": 0.2,
+                "fee_scale": 0.5,
                 "drawdown_penalty_scale": 0.3,
-                "churn_penalty_scale": 0.3,
-                "diversity_scale": 1.0,
+                "churn_penalty_scale": 0.5,
+                "quality_scale": 1.0,
             }
         elif phase == 2:
-            ent_coef = 0.05
+            ent_coef = 0.03
             reward_config = {
-                "inactivity_penalty_scale": 0.5,
-                "fee_scale": 0.5,
+                "inactivity_penalty_scale": 0.0,
+                "fee_scale": 1.0,
                 "drawdown_penalty_scale": 1.0,
-                "churn_penalty_scale": 0.5,
-                "diversity_scale": 0.5,
+                "churn_penalty_scale": 1.0,
+                "quality_scale": 1.0,
             }
         else:  # phase 3
-            ent_coef = 0.01
+            ent_coef = 0.005
             reward_config = {
-                "inactivity_penalty_scale": 1.0,
-                "fee_scale": 1.5,
+                "inactivity_penalty_scale": 0.0,
+                "fee_scale": 2.0,
                 "drawdown_penalty_scale": 1.5,
-                "churn_penalty_scale": 1.5,
-                "diversity_scale": 0.0,
+                "churn_penalty_scale": 2.0,
+                "quality_scale": 0.5,
             }
 
         # Update agent entropy coefficient

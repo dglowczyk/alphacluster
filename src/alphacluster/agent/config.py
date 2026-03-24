@@ -29,7 +29,7 @@ class TrainingConfig:
     max_grad_norm: float = 0.5
 
     # ── Training schedule ────────────────────────────────────────────────
-    total_timesteps: int = 2_000_000
+    total_timesteps: int = 1_000_000
     eval_freq: int = 10_000
     n_eval_episodes: int = 10
 
@@ -39,8 +39,8 @@ class TrainingConfig:
     # ── Curriculum ───────────────────────────────────────────────────────
     curriculum_enabled: bool = True
     phase1_end: float = 0.3  # first 30% of training
-    phase2_end: float = 0.7  # middle 40%
-    # Phase 3: remaining 30%
+    phase2_end: float = 0.6  # middle 30%
+    # Phase 3: remaining 40%
 
     # ── Tournament ───────────────────────────────────────────────────────
     tournament_freq: int = 100_000

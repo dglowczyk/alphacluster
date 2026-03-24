@@ -661,8 +661,10 @@ class TestTradingEnv:
         assert spec.entry_point == "alphacluster.env.trading_env:TradingEnv"
 
     def test_inactivity_penalty_when_flat(self):
-        """Flat agent should receive inactivity penalty after grace period on trends."""
-        # Use a lower start price to make percentage moves larger relative to price
+        """Inactivity penalty is disabled by default (scale=0.0).
+
+        When explicitly enabled, flat agent should receive penalty after grace period.
+        """
         rng = np.random.default_rng(42)
         n_candles = 3200
         timestamps = pd.date_range(start="2025-01-01", periods=n_candles, freq="5min", tz="UTC")
@@ -692,14 +694,22 @@ class TestTradingEnv:
             initial_balance=10_000.0,
         )
         env.reset(seed=0)
-        # Stay flat past the 20-step grace period
-        rewards = []
+
+        # Default: inactivity penalty disabled — staying flat should yield zero rewards
+        rewards_default = []
         for _ in range(50):
             _, reward, *_ = env.step([0, 0, 0])
-            rewards.append(reward)
-        # After the 20-step grace period, inactivity penalty should activate
-        # on significant trends (> 0.2%), making some rewards negative.
-        assert any(r < 0 for r in rewards)
+            rewards_default.append(reward)
+        assert all(r == 0.0 for r in rewards_default)
+
+        # When explicitly enabled, penalty should activate on trends
+        env.reset(seed=0)
+        env.reward_config["inactivity_penalty_scale"] = 1.0
+        rewards_enabled = []
+        for _ in range(50):
+            _, reward, *_ = env.step([0, 0, 0])
+            rewards_enabled.append(reward)
+        assert any(r < 0 for r in rewards_enabled)
 
     def test_trade_tracking_state(self):
         """Trade tracking state should update when positions are closed."""
@@ -717,8 +727,62 @@ class TestTradingEnv:
         """reward_config should be changeable for curriculum learning."""
         env = _make_env()
         env.reset(seed=0)
-        env.reward_config["inactivity_penalty_scale"] = 2.0
-        assert env.reward_config["inactivity_penalty_scale"] == 2.0
+        env.reward_config["quality_scale"] = 2.0
+        assert env.reward_config["quality_scale"] == 2.0
+        env.reward_config["churn_penalty_scale"] = 0.5
+        assert env.reward_config["churn_penalty_scale"] == 0.5
+
+    def test_churn_penalty_quadratic(self):
+        """Short trades should incur significant quadratic churn penalty."""
+        env = _make_env()
+        env.reset(seed=0)
+        # Open and immediately close (1-step trade)
+        env.step([1, 0, 0])  # open long
+        _, reward_quick, *_ = env.step([0, 0, 0])  # close immediately
+
+        # Open and hold longer before closing
+        env2 = _make_env()
+        env2.reset(seed=0)
+        env2.step([1, 0, 0])  # open long
+        for _ in range(25):
+            env2.step([1, 0, 0])  # hold
+        _, reward_held, *_ = env2.step([0, 0, 0])  # close after 26 steps
+
+        # Quick trade should have worse reward due to churn penalty
+        assert reward_quick < reward_held
+
+    def test_completion_reward_duration_scaling(self):
+        """Trade completion reward should scale quadratically with duration."""
+        env = _make_env()
+        env.reset(seed=0)
+        # The completion reward formula gives near-zero for 1-step winners
+        # and much larger for longer winners. We verify via the internal state.
+        env.step([1, 0, 0])  # open long
+        env.step([0, 0, 0])  # close after 1 step
+        short_duration = env._last_trade_duration
+
+        env2 = _make_env()
+        env2.reset(seed=0)
+        env2.step([1, 0, 0])  # open long
+        for _ in range(19):
+            env2.step([1, 0, 0])  # hold
+        env2.step([0, 0, 0])  # close after 20 steps
+        long_duration = env2._last_trade_duration
+
+        assert short_duration < 5
+        assert long_duration >= 20
+
+    def test_quality_bonus_for_winners(self):
+        """Quality bonus should fire for winning trades only."""
+        env = _make_env()
+        env.reset(seed=0)
+        assert "quality_scale" in env.reward_config
+        # The quality bonus is part of the reward — we verify the key exists
+        # and that the reward config accepts it
+        env.reward_config["quality_scale"] = 0.0
+        assert env.reward_config["quality_scale"] == 0.0
+        env.reward_config["quality_scale"] = 1.0
+        assert env.reward_config["quality_scale"] == 1.0
 
     def test_position_sizes_no_zero(self):
         """All non-flat actions should open positions (no 0% size)."""

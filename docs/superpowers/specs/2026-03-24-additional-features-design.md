@@ -34,17 +34,36 @@ After all 4 categories: N_MARKET_FEATURES goes from 19 → 38.
 The feature extractor in `network.py` dynamically reads `n_channels` from
 `observation_space["market"].shape[1]`. No network code changes are needed.
 
+**Important:** `trading_env.py` does NOT auto-adapt — it uses `N_MARKET_FEATURES`
+from config for the observation space shape, and `INDICATOR_COLUMNS` for the
+indicator array. These must be kept in sync. To eliminate this coupling,
+`N_MARKET_FEATURES` should be derived programmatically:
+
+```python
+# config.py
+from alphacluster.data.indicators import INDICATOR_COLUMNS
+N_MARKET_FEATURES = 5 + len(INDICATOR_COLUMNS)  # 5 OHLCV + indicators
+```
+
+If circular imports are an issue, define the constant in `indicators.py` and
+import it into `config.py`.
+
 Change points for each new feature:
 
 | Component | File | Change |
 |-----------|------|--------|
-| Constant | `config.py` | Update `N_MARKET_FEATURES` |
 | Indicator list | `indicators.py` | Add to `INDICATOR_COLUMNS` |
 | Compute function | `indicators.py` | Add computation in `compute_indicators()` |
 | NaN fill list | `indicators.py` | Add to fill list |
+| Docstring/comments | `trading_env.py` | Update `_get_market_obs()` docstring |
 | Tests | `test_indicators.py`, `test_env.py` | Update shape assertions |
 
-`trading_env.py` and `network.py` adapt automatically.
+`N_MARKET_FEATURES` updates automatically if derived from `INDICATOR_COLUMNS`.
+`network.py` adapts automatically (reads shape from observation_space).
+
+**Model checkpoint invalidation:** Changing `N_MARKET_FEATURES` makes all
+existing model checkpoints incompatible (Conv1d `in_channels` changes). After
+each phase, ELO ratings should be reset and a fresh training run started.
 
 ---
 
@@ -73,10 +92,39 @@ Funding rates are 8-hourly but candles are 5-minute. Merge strategy:
 1. In `compute_indicators()`, accept optional `funding_df` parameter
 2. Resample funding to 5-min by forward-fill (`ffill`) — each 5-min candle
    inherits the most recent funding rate
-3. Compute `funding_cumulative_24h` as rolling sum of the last 3 funding events
-   (use `shift` at 8h boundaries, not rolling window of 5-min candles)
-4. `funding_premium` requires `mark_price` from funding data, forward-filled
-   to 5-min and compared to candle close
+
+**`funding_cumulative_24h` concrete algorithm:**
+```python
+# Step 1: Compute cumulative on the 8h-frequency funding series (BEFORE ffill)
+funding_df["funding_cumulative_24h"] = (
+    funding_df["funding_rate"]
+    .rolling(3, min_periods=1)
+    .sum()
+)
+# Step 2: Merge into 5-min DataFrame via merge_asof (nearest past event)
+df = pd.merge_asof(
+    df.sort_values("open_time"),
+    funding_df[["funding_time", "funding_rate", "funding_cumulative_24h", "mark_price"]]
+        .sort_values("funding_time"),
+    left_on="open_time",
+    right_on="funding_time",
+    direction="backward",
+)
+# Step 3: Forward-fill any remaining NaN, then normalize
+df["funding_rate"] = df["funding_rate"].fillna(0.0) * 100
+df["funding_cumulative_24h"] = df["funding_cumulative_24h"].fillna(0.0) * 100
+```
+
+**`funding_premium` limitation:** `mark_price` is only available at 8h intervals.
+After forward-fill, the premium vs live close will be dominated by staleness
+during volatile markets. To mitigate: compute premium at funding timestamps,
+then forward-fill the result (not the mark_price itself):
+```python
+# Compute premium at funding event time, then ffill
+funding_df["funding_premium"] = funding_df["mark_price"] / funding_df["close_at_funding"] - 1
+# merge_asof brings this already-computed value into 5-min df
+```
+This requires joining the nearest 5-min close to each funding event first.
 
 **Handling missing funding data:**
 If `funding_df` is None (no funding data available), all 3 features default
@@ -90,12 +138,21 @@ def compute_indicators(
 ) -> pd.DataFrame:
 ```
 
+**`open_time` dependency:** The resampling and merge_asof operations require
+`open_time` to be a datetime column. `trading_env.py` already converts it
+before calling `compute_indicators()`. Callers outside the env path (tests,
+notebooks) must ensure `open_time` is datetime. Add a guard at the top of
+`compute_indicators()`:
+```python
+if "open_time" in df.columns and not pd.api.types.is_datetime64_any_dtype(df["open_time"]):
+    df["open_time"] = pd.to_datetime(df["open_time"], utc=True)
+```
+
 ### Edge Cases
 
 - First funding rate appears Sept 2019. Data before that: fill with 0.0.
 - Funding rate can spike during extreme events (>0.1%). No clipping needed —
   the network should see extreme values to learn caution.
-- Mark price may differ from close by up to 0.5% during volatility.
 
 ---
 
@@ -115,7 +172,7 @@ explicit higher-timeframe indicators.
 | Feature | Formula | Normalization |
 |---------|---------|---------------|
 | `rsi_14_1h` | RSI(14) on 1h candles | / 50 - 1 (same as 5min RSI) |
-| `macd_hist_1h` | MACD histogram on 1h candles | / (close × 0.01) |
+| `macd_hist_1h` | MACD histogram on 1h candles | / (1h_close × 0.01), then ffill to 5min |
 | `bb_pctb_1h` | Bollinger %B on 1h candles | Raw (0-1 scale) |
 
 **4-hour timeframe (3 features):**
@@ -123,7 +180,7 @@ explicit higher-timeframe indicators.
 | Feature | Formula | Normalization |
 |---------|---------|---------------|
 | `rsi_14_4h` | RSI(14) on 4h candles | / 50 - 1 |
-| `macd_hist_4h` | MACD histogram on 4h candles | / (close × 0.01) |
+| `macd_hist_4h` | MACD histogram on 4h candles | / (4h_close × 0.01), then ffill to 5min |
 | `bb_pctb_4h` | Bollinger %B on 4h candles | Raw (0-1 scale) |
 
 **Trend alignment (3 features):**
@@ -132,11 +189,12 @@ explicit higher-timeframe indicators.
 |---------|---------|---------------|
 | `trend_alignment_1h` | Sign(return_12) × Sign(return_1) | {-1, 0, 1} |
 | `trend_alignment_4h` | Sign(return_48) × Sign(return_1) | {-1, 0, 1} |
-| `higher_tf_momentum` | `(return_12 + return_48) / 2` | / volatility_60 |
+| `higher_tf_momentum` | `(return_12 + return_48) / 2` | / max(volatility_60, 1e-8) |
 
 `trend_alignment` tells the agent whether 5-min momentum agrees with higher
 timeframe direction. `higher_tf_momentum` combines both into a single
-volatility-normalized signal.
+volatility-normalized signal. Division uses `max(volatility_60, 1e-8)` floor
+to avoid extreme values during calm markets.
 
 ### Implementation
 
@@ -217,10 +275,24 @@ df["vol_regime"] = pd.cut(
 ).astype(float)
 ```
 
+### Implementation Note: `vol_regime` bucketization
+
+Avoid `pd.cut` which returns Categorical (type issues across pandas versions).
+Use `np.where` instead:
+```python
+df["vol_regime"] = np.where(
+    df["vol_percentile"] < 0.25, -1.0,
+    np.where(df["vol_percentile"] > 0.75, 1.0, 0.0),
+)
+```
+
 ### Warmup
 
-`vol_percentile` needs 252 periods (= 21 hours of 5-min data). Well within
-the data range before episode start.
+`vol_percentile` needs 252 + 20 periods (252 for rolling rank + 20 for the
+underlying `volatility_20`) = 272 periods = ~22.7 hours of 5-min data.
+The lookback of 252 5-min periods (~21 hours) is intentionally short — it
+measures intraday volatility context, not yearly. Well within the data range
+before episode start.
 
 ---
 
@@ -238,7 +310,11 @@ But divergences (ETH leading BTC, or correlation breakdown) are strong signals.
 | `eth_btc_corr_20` | Rolling 20-period correlation of returns | Raw (-1 to 1) |
 | `eth_btc_corr_60` | Rolling 60-period correlation of returns | Raw (-1 to 1) |
 | `eth_relative_strength` | `eth_return_20 - btc_return_20` | Raw |
-| `eth_lead_signal` | Correlation of `eth_return_1(t)` with `btc_return_1(t+1)` over 60 periods | Raw (-1 to 1) |
+| `eth_lead_signal` | Rolling correlation: `eth_return_1(t-1)` vs `btc_return_1(t)` over 60 periods | Raw (-1 to 1) |
+
+`eth_lead_signal` measures whether ETH returns from the previous period predict
+BTC returns in the current period. This is a lagged correlation — no future data
+is used.
 
 ### Data Pipeline Changes
 
@@ -259,26 +335,41 @@ def compute_indicators(
 ) -> pd.DataFrame:
 ```
 
-Merge ETH data by `open_time` (inner join — only timestamps present in both).
+Merge ETH data by `open_time` using **left join** on the BTC DataFrame. This
+preserves all BTC rows even if ETH has gaps. Missing ETH values are NaN-filled
+(forward-fill then 0.0).
+
+```python
+df = df.merge(
+    eth_df[["open_time", "close"]].rename(columns={"close": "eth_close"}),
+    on="open_time",
+    how="left",
+)
+df["eth_close"] = df["eth_close"].ffill().fillna(0.0)
+```
+
 If `eth_df` is None, cross-asset features default to 0.0.
+
+### `eth_lead_signal` — Lookahead-Safe Implementation
+
+```python
+eth_return = eth_close.pct_change(1)
+btc_return = btc_close.pct_change(1)
+
+# Shift ETH return back by 1: correlate eth_return(t-1) with btc_return(t)
+eth_lead_signal = eth_return.shift(1).rolling(60).corr(btc_return)
+```
+
+At time T, this uses `eth_return[T-60..T-1]` and `btc_return[T-59..T]` — all
+past data. No future data is accessed.
 
 ### Edge Cases
 
-- ETH data may have gaps where BTC doesn't (and vice versa). Inner join
-  handles this, but downstream NaN fill catches any remaining gaps.
+- ETH data may have gaps where BTC doesn't. Left join + ffill handles this.
 - During ETH-specific events (merge, forks), correlation breaks down.
   This is actually useful signal — the agent should see it.
-- `eth_lead_signal` is the rolling correlation of `eth_return(t)` vs
-  `btc_return(t+1)`. This requires shifted data — careful not to introduce
-  lookahead bias. Use `btc_return_1.shift(-1)` only during indicator
-  computation, and the resulting correlation is stored as a current-time
-  feature (no future leakage since it's computed over past 60 windows).
-
-**Wait — lookahead concern:** `eth_lead_signal` correlates eth_return(t) with
-btc_return(t+1). At computation time this uses future BTC data. But we compute
-it as a *rolling statistic over the past 60 periods*, so each row's value only
-uses data up to that row's time minus 1. This is safe — the correlation at time
-T is computed using pairs (eth_t-60...eth_t-1, btc_t-59...btc_t), all past data.
+- ETH data starts later than BTC: rows before ETH availability get 0.0
+  for all cross-asset features.
 
 ---
 

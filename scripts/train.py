@@ -21,7 +21,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from alphacluster.agent.config import TrainingConfig
 from alphacluster.agent.trainer import create_agent, save_agent, train
-from alphacluster.config import DATA_DIR, MODELS_DIR
+from alphacluster.config import DATA_DIR, MODEL_VERSION, MODELS_DIR
 from alphacluster.data.storage import DEFAULT_FUNDING_PATH, DEFAULT_KLINES_PATH
 from alphacluster.env.trading_env import TradingEnv
 
@@ -229,6 +229,7 @@ def main(argv: list[str] | None = None) -> int:
     # ── Train ────────────────────────────────────────────────────────────
     checkpoint_dir = args.checkpoint_dir or str(MODELS_DIR / "checkpoints")
     print(f"Training for {config.total_timesteps:,} timesteps ...")
+    print(f"  Model version: {MODEL_VERSION}")
     print(f"  Checkpoints: {checkpoint_dir}")
     print(f"  Parallel envs: {n_envs}")
     print(f"  Curriculum: {'enabled' if config.curriculum_enabled else 'disabled'}")

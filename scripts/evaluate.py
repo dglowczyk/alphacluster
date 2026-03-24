@@ -33,7 +33,7 @@ from alphacluster.agent.trainer import load_agent
 from alphacluster.backtest.metrics import calculate_metrics, print_report
 from alphacluster.backtest.runner import run_backtest
 from alphacluster.backtest.visualizer import save_report
-from alphacluster.config import DATA_DIR, MODELS_DIR, PROJECT_ROOT, WINDOW_SIZE
+from alphacluster.config import DATA_DIR, MODEL_VERSION, MODELS_DIR, PROJECT_ROOT, WINDOW_SIZE
 from alphacluster.data.storage import load_from_parquet
 from alphacluster.env.trading_env import TradingEnv
 from alphacluster.tournament.versioning import get_champion, load_generation
@@ -225,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Model metadata: {metadata}")
 
     # ── Run backtest ─────────────────────────────────────────────────
+    print(f"Model version: {MODEL_VERSION}")
     print(f"\nRunning backtest ({args.episodes} episode(s))...")
     result = run_backtest(model, env, n_episodes=args.episodes, seed=args.seed)
 

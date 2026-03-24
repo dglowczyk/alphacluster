@@ -833,3 +833,11 @@ class TestTradingEnv:
         # Continue stepping the environment - should not crash
         obs, reward, terminated, truncated, info = env.step(np.array([0, 0, 0]))  # flat
         assert not truncated  # Episode did not end
+
+
+def test_model_version_exists():
+    """MODEL_VERSION should be defined in config and be a non-empty string."""
+    from alphacluster.config import MODEL_VERSION
+
+    assert isinstance(MODEL_VERSION, str)
+    assert len(MODEL_VERSION) > 0

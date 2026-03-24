@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 from alphacluster.backtest.runner import BacktestResult  # noqa: E402
+from alphacluster.config import MODEL_VERSION  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -342,6 +343,7 @@ def _save_metrics_text(metrics: dict[str, Any], path: Path) -> None:
     """Write metrics to a plain text file."""
     lines = [
         "BACKTEST METRICS",
+        f"Model Version: {MODEL_VERSION}",
         "=" * 50,
         "",
     ]

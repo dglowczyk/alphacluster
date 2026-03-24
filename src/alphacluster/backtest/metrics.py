@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 
 from alphacluster.backtest.runner import BacktestResult
+from alphacluster.config import MODEL_VERSION
 
 
 def calculate_metrics(result: BacktestResult) -> dict[str, Any]:
@@ -29,6 +30,7 @@ def calculate_metrics(result: BacktestResult) -> dict[str, Any]:
         Dictionary containing all computed metrics.
     """
     metrics: dict[str, Any] = {}
+    metrics["model_version"] = MODEL_VERSION
 
     episodes = result.equity_curve  # list[list[float]]
     trades = result.trade_log

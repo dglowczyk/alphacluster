@@ -6,6 +6,7 @@ and provides helpers for checkpointing and evaluation.
 
 from __future__ import annotations
 
+import csv
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -309,6 +310,106 @@ class TournamentCallback(BaseCallback):
 
 
 # ---------------------------------------------------------------------------
+# Training metrics callback
+# ---------------------------------------------------------------------------
+
+
+class TrainingMetricsCallback(BaseCallback):
+    """Log trading metrics periodically during training.
+
+    Runs a mini-backtest every ``log_freq`` timesteps and appends a row
+    to a CSV file with key trading metrics (trades/episode, win rate,
+    duration, flat %, PnL, fee-to-PnL ratio).
+
+    Parameters
+    ----------
+    eval_env:
+        A raw (unwrapped) TradingEnv for running mini-backtests.
+    log_freq:
+        How often (in timesteps) to run the mini-backtest and log.
+    n_episodes:
+        Number of episodes per mini-backtest.
+    log_path:
+        Path to the CSV file for metric logging.
+    verbose:
+        Verbosity level.
+    """
+
+    def __init__(
+        self,
+        eval_env: Any,
+        log_freq: int = 50_000,
+        n_episodes: int = 3,
+        log_path: str | Path = "training_metrics.csv",
+        verbose: int = 0,
+    ) -> None:
+        super().__init__(verbose)
+        self.eval_env = eval_env
+        self.log_freq = log_freq
+        self.n_episodes = n_episodes
+        self.log_path = Path(log_path)
+        self._next_log = log_freq
+        self._header_written = False
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps < self._next_log:
+            return True
+        self._next_log += self.log_freq
+
+        from alphacluster.backtest.metrics import calculate_metrics
+        from alphacluster.backtest.runner import run_backtest
+
+        try:
+            result = run_backtest(
+                model=self.model,
+                env=self.eval_env,
+                n_episodes=self.n_episodes,
+                seed=42,
+            )
+            metrics = calculate_metrics(result)
+        except Exception:
+            logger.exception(
+                "TrainingMetricsCallback: backtest failed at step %d",
+                self.num_timesteps,
+            )
+            return True
+
+        row = {
+            "timestep": self.num_timesteps,
+            "mean_reward": metrics.get("avg_episode_return_pct", 0.0),
+            "trades_per_episode": metrics.get("avg_trades_per_episode", 0.0),
+            "win_rate": metrics.get("win_rate", 0.0),
+            "avg_trade_duration": metrics.get("avg_trade_duration", 0.0),
+            "flat_pct": metrics.get("avg_flat_pct", 0.0),
+            "total_pnl_pct": metrics.get("total_pnl_pct", 0.0),
+            "fee_to_pnl_ratio": metrics.get("fee_to_pnl_ratio", 0.0),
+        }
+
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not self._header_written and not self.log_path.exists()
+
+        with open(self.log_path, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=row.keys())
+            if write_header:
+                writer.writeheader()
+            writer.writerow(row)
+            self._header_written = True
+
+        msg = (
+            f"Metrics @ {self.num_timesteps}: "
+            f"trades/ep={row['trades_per_episode']:.1f}, "
+            f"win_rate={row['win_rate']:.1f}%, "
+            f"flat={row['flat_pct']:.1f}%, "
+            f"PnL={row['total_pnl_pct']:.2f}%"
+        )
+        logger.info(msg)
+        if self.verbose:
+            print(msg)
+
+        return True
+
+
+# ---------------------------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------------------------
 
@@ -368,6 +469,8 @@ def train(
     )
 
     # ── Eval callback ─────────────────────────────────────────────────
+    raw_eval_env = eval_env  # Keep unwrapped reference for TrainingMetricsCallback
+
     if eval_env is not None:
         from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv, VecNormalize
 
@@ -406,6 +509,19 @@ def train(
                 tournament_freq=config.tournament_freq,
                 eval_env=eval_env,
                 config=config,
+                verbose=verbose,
+            )
+        )
+
+    # ── Training metrics callback ─────────────────────────────────────
+    if raw_eval_env is not None:
+        metrics_log_path = Path(checkpoint_dir) / "training_metrics.csv"
+        callbacks.append(
+            TrainingMetricsCallback(
+                eval_env=raw_eval_env,
+                log_freq=50_000,
+                n_episodes=3,
+                log_path=metrics_log_path,
                 verbose=verbose,
             )
         )

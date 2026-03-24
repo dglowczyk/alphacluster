@@ -1018,3 +1018,22 @@ def test_churn_penalty_rebalanced():
 
     assert r1 < r10
     assert r20 >= r10
+
+
+def test_training_metrics_callback_creates_csv(tmp_path):
+    """TrainingMetricsCallback should be instantiable with correct attributes."""
+    from alphacluster.agent.trainer import TrainingMetricsCallback
+
+    log_path = tmp_path / "metrics.csv"
+    cb = TrainingMetricsCallback(
+        eval_env=None,
+        log_freq=10_000,
+        n_episodes=2,
+        log_path=log_path,
+    )
+
+    assert cb.log_freq == 10_000
+    assert cb.n_episodes == 2
+    assert cb.log_path == log_path
+    assert cb._next_log == 10_000
+    assert cb._header_written is False

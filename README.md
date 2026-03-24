@@ -36,8 +36,8 @@ AlphaZero-inspired deep reinforcement learning system for backtesting crypto per
 - **OHLCV + 14 technical indicators** — RSI, MACD, Bollinger Bands, ATR, volume ratio, OBV slope, VWAP distance, returns, volatility
 - **CNN+Transformer feature extractor** — Conv1d compression + 3-layer Transformer encoder with learnable positional encoding
 - **Discrete action space**: direction (3) x position size (4) x leverage (3) = 36 actions; no 0% size — agent must trade or explicitly go flat
-- **Multi-component reward** (7 components) — asymmetric PnL (1.5x winners), fee penalty, trend-based inactivity penalty (20-step grace), position management (hold winners with time bonus), trade completion (always negative for losers), churn penalty, quadratic drawdown
-- **Curriculum learning** — 3 phases: learn mechanics (zero cost penalties) → introduce costs (half-strength) → full discipline (amplified fees/churn)
+- **Multi-component reward** (8 components) — asymmetric PnL (1.5x winners), fee penalty, opportunity cost (market-driven flat penalty), position management (sqrt ramp for winners), trade completion (quadratic duration scaling), churn penalty (base 0.02, threshold 20), quadratic drawdown, trade quality bonus
+- **Curriculum learning** — 3 phases: learn to trade (0-30%) → learn quality (30-60%) → refine & exploit (60-100%)
 - **Position modification** — change leverage/size within same direction at reduced fees (delta-only)
 - **Parallel training** — 4x SubprocVecEnv + VecNormalize reward normalization
 - **576-candle observation window** (2 days of 5-min data) with 19 features per candle

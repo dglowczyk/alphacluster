@@ -1111,6 +1111,7 @@ class TestRewardConfig:
 # CurriculumCallback tests
 # ---------------------------------------------------------------------------
 
+
 class TestCurriculumCallback:
     """Tests for CurriculumCallback with configurable base scales."""
 

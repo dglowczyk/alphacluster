@@ -123,7 +123,7 @@ class CurriculumCallback(BaseCallback):
         if phase == 1:
             ent_coef = 0.05
             reward_config = {
-                "inactivity_penalty_scale": 0.0,
+                "opportunity_cost_scale": 0.3,
                 "fee_scale": 0.5,
                 "drawdown_penalty_scale": 0.3,
                 "churn_penalty_scale": 0.5,
@@ -132,7 +132,7 @@ class CurriculumCallback(BaseCallback):
         elif phase == 2:
             ent_coef = 0.03
             reward_config = {
-                "inactivity_penalty_scale": 0.0,
+                "opportunity_cost_scale": 0.5,
                 "fee_scale": 1.0,
                 "drawdown_penalty_scale": 1.0,
                 "churn_penalty_scale": 1.0,
@@ -141,7 +141,7 @@ class CurriculumCallback(BaseCallback):
         else:  # phase 3
             ent_coef = 0.005
             reward_config = {
-                "inactivity_penalty_scale": 0.0,
+                "opportunity_cost_scale": 1.0,
                 "fee_scale": 2.0,
                 "drawdown_penalty_scale": 1.5,
                 "churn_penalty_scale": 2.0,

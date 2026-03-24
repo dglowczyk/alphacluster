@@ -96,12 +96,127 @@ class CurriculumCallback(BaseCallback):
 
     Phase 3 — "Refine & Exploit" (60–100%):
         Low exploration, strict fee/churn/drawdown penalties.
+
+    Parameters
+    ----------
+    config:
+        Training configuration with phase boundaries and total timesteps.
+    base_reward_config:
+        Optional dict overriding default base scales. Keys are reward config
+        names (e.g. ``fee_scale``, ``churn_penalty_scale``). Phase-specific
+        values are computed as ``base × phase_multiplier``.
+    phase3_fee_multiplier:
+        Override the Phase 3 fee multiplier (default 2.0).
+    phase3_churn_multiplier:
+        Override the Phase 3 churn penalty multiplier (default 2.0).
+    ent_coef_phase1:
+        If provided, Phase 1 entropy coefficient. Phase 2 = 0.6×, Phase 3 = 0.1×.
+        If ``None``, uses the original hardcoded values (0.05, 0.03, 0.005).
+    verbose:
+        Verbosity level.
     """
 
-    def __init__(self, config: TrainingConfig, verbose: int = 0) -> None:
+    _DEFAULT_BASE: dict[str, float] = {
+        "fee_scale": 1.0,
+        "churn_penalty_scale": 1.0,
+        "opportunity_cost_scale": 1.0,
+        "opportunity_cost_cap": 0.02,
+        "opportunity_cost_threshold": 0.002,
+        "drawdown_penalty_scale": 1.0,
+        "quality_scale": 1.0,
+        "position_mgmt_scale": 1.0,
+    }
+
+    # Multipliers keyed by phase number.  Phase 3 fee/churn are overrideable.
+    _PHASE_MULTIPLIERS: dict[int, dict[str, float]] = {
+        1: {
+            "fee_scale": 0.5,
+            "churn_penalty_scale": 0.5,
+            "opportunity_cost_scale": 0.3,
+            "opportunity_cost_cap": 1.0,
+            "opportunity_cost_threshold": 1.0,
+            "drawdown_penalty_scale": 0.3,
+            "quality_scale": 1.0,
+            "position_mgmt_scale": 1.0,
+        },
+        2: {
+            "fee_scale": 1.0,
+            "churn_penalty_scale": 1.0,
+            "opportunity_cost_scale": 0.5,
+            "opportunity_cost_cap": 1.0,
+            "opportunity_cost_threshold": 1.0,
+            "drawdown_penalty_scale": 1.0,
+            "quality_scale": 1.0,
+            "position_mgmt_scale": 1.0,
+        },
+        3: {
+            "fee_scale": 2.0,
+            "churn_penalty_scale": 2.0,
+            "opportunity_cost_scale": 1.0,
+            "opportunity_cost_cap": 1.0,
+            "opportunity_cost_threshold": 1.0,
+            "drawdown_penalty_scale": 1.5,
+            "quality_scale": 0.5,
+            "position_mgmt_scale": 1.0,
+        },
+    }
+
+    _DEFAULT_ENT_COEFS: dict[int, float] = {1: 0.05, 2: 0.03, 3: 0.005}
+
+    def __init__(
+        self,
+        config: TrainingConfig,
+        verbose: int = 0,
+        *,
+        base_reward_config: dict[str, float] | None = None,
+        phase3_fee_multiplier: float | None = None,
+        phase3_churn_multiplier: float | None = None,
+        ent_coef_phase1: float | None = None,
+    ) -> None:
         super().__init__(verbose)
         self.config = config
         self._current_phase: int = 0
+
+        # Merge caller-provided base scales onto defaults
+        self._base = {**self._DEFAULT_BASE}
+        if base_reward_config is not None:
+            self._base.update(base_reward_config)
+
+        self._phase3_fee_multiplier = phase3_fee_multiplier
+        self._phase3_churn_multiplier = phase3_churn_multiplier
+        self._ent_coef_phase1 = ent_coef_phase1
+
+    # ------------------------------------------------------------------
+    # Public helpers (also used by tests)
+    # ------------------------------------------------------------------
+
+    def _get_phase_ent_coef(self, phase: int) -> float:
+        """Return the entropy coefficient for *phase*."""
+        if self._ent_coef_phase1 is not None:
+            ratios = {1: 1.0, 2: 0.6, 3: 0.1}
+            return self._ent_coef_phase1 * ratios[phase]
+        return self._DEFAULT_ENT_COEFS[phase]
+
+    def _get_phase_reward_config(self, phase: int) -> dict[str, float]:
+        """Return the full reward config dict for *phase*.
+
+        Computes ``base_value × phase_multiplier`` for every key.  For Phase 3
+        the fee and churn multipliers can be overridden via constructor args.
+        """
+        multipliers = {**self._PHASE_MULTIPLIERS[phase]}
+
+        # Apply caller overrides for Phase 3
+        if phase == 3:
+            if self._phase3_fee_multiplier is not None:
+                multipliers["fee_scale"] = self._phase3_fee_multiplier
+            if self._phase3_churn_multiplier is not None:
+                multipliers["churn_penalty_scale"] = self._phase3_churn_multiplier
+
+        return {key: self._base[key] * multipliers.get(key, 1.0) for key in self._base}
+
+    # ------------------------------------------------------------------
+    # BaseCallback interface
+    # ------------------------------------------------------------------
 
     def _on_step(self) -> bool:
         progress = self.num_timesteps / self.config.total_timesteps
@@ -121,42 +236,8 @@ class CurriculumCallback(BaseCallback):
         return 3
 
     def _apply_phase(self, phase: int) -> None:
-        if phase == 1:
-            ent_coef = 0.05
-            reward_config = {
-                "opportunity_cost_scale": 0.3,
-                "opportunity_cost_cap": 0.02,
-                "opportunity_cost_threshold": 0.002,
-                "fee_scale": 0.5,
-                "drawdown_penalty_scale": 0.3,
-                "churn_penalty_scale": 0.5,
-                "quality_scale": 1.0,
-                "position_mgmt_scale": 1.0,
-            }
-        elif phase == 2:
-            ent_coef = 0.03
-            reward_config = {
-                "opportunity_cost_scale": 0.5,
-                "opportunity_cost_cap": 0.02,
-                "opportunity_cost_threshold": 0.002,
-                "fee_scale": 1.0,
-                "drawdown_penalty_scale": 1.0,
-                "churn_penalty_scale": 1.0,
-                "quality_scale": 1.0,
-                "position_mgmt_scale": 1.0,
-            }
-        else:  # phase 3
-            ent_coef = 0.005
-            reward_config = {
-                "opportunity_cost_scale": 1.0,
-                "opportunity_cost_cap": 0.02,
-                "opportunity_cost_threshold": 0.002,
-                "fee_scale": 2.0,
-                "drawdown_penalty_scale": 1.5,
-                "churn_penalty_scale": 2.0,
-                "quality_scale": 0.5,
-                "position_mgmt_scale": 1.0,
-            }
+        ent_coef = self._get_phase_ent_coef(phase)
+        reward_config = self._get_phase_reward_config(phase)
 
         # Update agent entropy coefficient
         self.model.ent_coef = ent_coef

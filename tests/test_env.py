@@ -7,6 +7,8 @@ import pandas as pd
 import pytest
 from gymnasium.utils.env_checker import check_env
 
+from alphacluster.agent.config import TrainingConfig
+from alphacluster.agent.trainer import CurriculumCallback
 from alphacluster.config import (
     MAKER_FEE,
     N_ACCOUNT_FEATURES,
@@ -1103,3 +1105,41 @@ class TestRewardConfig:
             rewards2.append(r2)
 
         assert sum(rewards1) != pytest.approx(sum(rewards2), abs=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# CurriculumCallback tests
+# ---------------------------------------------------------------------------
+
+class TestCurriculumCallback:
+    """Tests for CurriculumCallback with configurable base scales."""
+
+    def test_default_behavior_unchanged(self):
+        """CurriculumCallback with no extra args behaves as before."""
+        config = TrainingConfig(total_timesteps=100)
+        cb = CurriculumCallback(config)
+        phase_config = cb._get_phase_reward_config(1)
+        assert phase_config["fee_scale"] == pytest.approx(0.5)
+        assert phase_config["opportunity_cost_scale"] == pytest.approx(0.3)
+
+    def test_custom_base_scales_applied(self):
+        """Custom base_reward_config should be multiplied by phase multipliers."""
+        config = TrainingConfig(total_timesteps=100)
+        base = {"fee_scale": 0.5, "churn_penalty_scale": 0.8}
+        cb = CurriculumCallback(
+            config,
+            base_reward_config=base,
+            phase3_fee_multiplier=2.5,
+            phase3_churn_multiplier=1.5,
+        )
+        phase3_config = cb._get_phase_reward_config(3)
+        assert phase3_config["fee_scale"] == pytest.approx(1.25)  # 0.5 * 2.5
+        assert phase3_config["churn_penalty_scale"] == pytest.approx(1.2)  # 0.8 * 1.5
+
+    def test_ent_coef_phase_derivation(self):
+        """ent_coef should be derived from phase1 value."""
+        config = TrainingConfig(total_timesteps=100)
+        cb = CurriculumCallback(config, ent_coef_phase1=0.08)
+        assert cb._get_phase_ent_coef(1) == pytest.approx(0.08)
+        assert cb._get_phase_ent_coef(2) == pytest.approx(0.048)  # 0.08 * 0.6
+        assert cb._get_phase_ent_coef(3) == pytest.approx(0.008)  # 0.08 * 0.1

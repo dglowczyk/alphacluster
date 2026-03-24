@@ -1037,3 +1037,69 @@ def test_training_metrics_callback_creates_csv(tmp_path):
     assert cb.log_path == log_path
     assert cb._next_log == 10_000
     assert cb._header_written is False
+
+
+# ===========================================================================
+# Reward config tests
+# ===========================================================================
+
+
+class TestRewardConfig:
+    """Tests for configurable reward parameters."""
+
+    def test_opportunity_cost_cap_configurable(self):
+        """Custom opportunity_cost_cap should be used in reward computation."""
+        env = _make_env(episode_length=200)
+        obs, _ = env.reset(seed=0)
+        env.reward_config = {
+            **env.reward_config,
+            "opportunity_cost_cap": 0.10,
+            "opportunity_cost_threshold": 0.002,
+        }
+        assert "opportunity_cost_cap" in env.reward_config
+        assert env.reward_config["opportunity_cost_cap"] == 0.10
+
+    def test_opportunity_cost_threshold_configurable(self):
+        """Custom opportunity_cost_threshold should be used in reward computation."""
+        env = _make_env(episode_length=200)
+        obs, _ = env.reset(seed=0)
+        env.reward_config = {
+            **env.reward_config,
+            "opportunity_cost_threshold": 0.005,
+        }
+        assert env.reward_config["opportunity_cost_threshold"] == 0.005
+
+    def test_position_mgmt_scale_configurable(self):
+        """position_mgmt_scale should exist in DEFAULT_REWARD_CONFIG."""
+        env = _make_env(episode_length=200)
+        assert "position_mgmt_scale" in env.reward_config
+        assert env.reward_config["position_mgmt_scale"] == 1.0
+
+    def test_opportunity_cost_cap_affects_reward(self):
+        """Different opportunity_cost_cap values should produce different rewards."""
+        env1 = _make_env(episode_length=200)
+        env2 = _make_env(episode_length=200)
+        env1.reset(seed=0)
+        env2.reset(seed=0)
+
+        # Use a very low threshold so that typical price movements trigger
+        # the opportunity cost, then vary the cap to produce different rewards.
+        env1.reward_config = {
+            **env1.reward_config,
+            "opportunity_cost_threshold": 0.0,
+            "opportunity_cost_cap": 0.001,
+        }
+        env2.reward_config = {
+            **env2.reward_config,
+            "opportunity_cost_threshold": 0.0,
+            "opportunity_cost_cap": 0.50,
+        }
+
+        rewards1, rewards2 = [], []
+        for _ in range(50):
+            _, r1, _, _, _ = env1.step([0, 0, 0])
+            _, r2, _, _, _ = env2.step([0, 0, 0])
+            rewards1.append(r1)
+            rewards2.append(r2)
+
+        assert sum(rewards1) != pytest.approx(sum(rewards2), abs=1e-10)

@@ -125,28 +125,37 @@ class CurriculumCallback(BaseCallback):
             ent_coef = 0.05
             reward_config = {
                 "opportunity_cost_scale": 0.3,
+                "opportunity_cost_cap": 0.02,
+                "opportunity_cost_threshold": 0.002,
                 "fee_scale": 0.5,
                 "drawdown_penalty_scale": 0.3,
                 "churn_penalty_scale": 0.5,
                 "quality_scale": 1.0,
+                "position_mgmt_scale": 1.0,
             }
         elif phase == 2:
             ent_coef = 0.03
             reward_config = {
                 "opportunity_cost_scale": 0.5,
+                "opportunity_cost_cap": 0.02,
+                "opportunity_cost_threshold": 0.002,
                 "fee_scale": 1.0,
                 "drawdown_penalty_scale": 1.0,
                 "churn_penalty_scale": 1.0,
                 "quality_scale": 1.0,
+                "position_mgmt_scale": 1.0,
             }
         else:  # phase 3
             ent_coef = 0.005
             reward_config = {
                 "opportunity_cost_scale": 1.0,
+                "opportunity_cost_cap": 0.02,
+                "opportunity_cost_threshold": 0.002,
                 "fee_scale": 2.0,
                 "drawdown_penalty_scale": 1.5,
                 "churn_penalty_scale": 2.0,
                 "quality_scale": 0.5,
+                "position_mgmt_scale": 1.0,
             }
 
         # Update agent entropy coefficient

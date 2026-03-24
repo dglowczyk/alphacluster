@@ -35,10 +35,13 @@ _FUNDING_HOURS = (0, 8, 16)  # UTC hours at which funding is applied
 # Default reward configuration — can be overridden by CurriculumCallback
 DEFAULT_REWARD_CONFIG: dict[str, float] = {
     "opportunity_cost_scale": 0.5,
+    "opportunity_cost_cap": 0.02,
+    "opportunity_cost_threshold": 0.002,
     "fee_scale": 1.0,
     "drawdown_penalty_scale": 1.0,
     "churn_penalty_scale": 1.0,
     "quality_scale": 1.0,
+    "position_mgmt_scale": 1.0,
 }
 
 
@@ -359,20 +362,23 @@ class TradingEnv(gym.Env):
                 price_change = abs(
                     self._close[self._current_idx] - self._close[self._current_idx - lookback]
                 ) / max(self._close[self._current_idx - lookback], 1e-12)
-                if price_change > 0.002:
-                    raw_penalty = price_change - 0.002
-                    opportunity_penalty = min(raw_penalty, 0.02) * rc["opportunity_cost_scale"]
+                opp_threshold = rc.get("opportunity_cost_threshold", 0.002)
+                opp_cap = rc.get("opportunity_cost_cap", 0.02)
+                if price_change > opp_threshold:
+                    raw_penalty = price_change - opp_threshold
+                    opportunity_penalty = min(raw_penalty, opp_cap) * rc["opportunity_cost_scale"]
 
         # 4. POSITION MANAGEMENT REWARD (sqrt ramp for winners)
         position_reward = 0.0
         if self.account.position_side != "flat":
             upnl_ratio = self.account.unrealized_pnl / self.initial_balance
+            pos_scale = rc.get("position_mgmt_scale", 1.0)
             if upnl_ratio > 0:
                 hold_time_bonus = min((self.account.time_in_position**0.5) / 5.0, 3.0)
-                position_reward = 0.4 * upnl_ratio * (1.0 + hold_time_bonus)
+                position_reward = 0.4 * pos_scale * upnl_ratio * (1.0 + hold_time_bonus)
             else:
                 time_factor = 1.0 + self.account.time_in_position / 100.0
-                position_reward = 0.4 * upnl_ratio * time_factor
+                position_reward = 0.4 * pos_scale * upnl_ratio * time_factor
 
         # 5. TRADE COMPLETION REWARD (quadratic duration scaling)
         completion_reward = 0.0

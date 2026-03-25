@@ -1212,7 +1212,7 @@ class TestSimpleActions:
         )
         env.reset(seed=42)
         _obs, _reward, _term, _trunc, info_open = env.step(1)  # open long
-        balance_after_open = info_open["balance"]
+        _balance_after_open = info_open["balance"]
         _obs, _reward, _term, _trunc, info_hold = env.step(1)  # repeat long
         assert info_hold["fees"] == 0.0
         # Balance unchanged by fees (only PnL may change)

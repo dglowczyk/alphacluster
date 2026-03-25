@@ -1144,3 +1144,12 @@ class TestCurriculumCallback:
         assert cb._get_phase_ent_coef(1) == pytest.approx(0.08)
         assert cb._get_phase_ent_coef(2) == pytest.approx(0.048)  # 0.08 * 0.6
         assert cb._get_phase_ent_coef(3) == pytest.approx(0.008)  # 0.08 * 0.1
+
+
+class TestSimpleActionsConfig:
+    def test_default_simple_actions_false(self):
+        """Default TrainingConfig has simple_actions=False."""
+        config = TrainingConfig()
+        assert config.simple_actions is False
+        assert config.fixed_size_pct == 0.10
+        assert config.fixed_leverage == 10

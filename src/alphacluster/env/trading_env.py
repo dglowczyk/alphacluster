@@ -75,6 +75,9 @@ class TradingEnv(gym.Env):
         window_size: int = WINDOW_SIZE,
         episode_length: int = EPISODE_LENGTH,
         initial_balance: float = 10_000.0,
+        simple_actions: bool = False,
+        fixed_size_pct: float = 0.10,
+        fixed_leverage: int = 10,
     ) -> None:
         super().__init__()
 
@@ -83,6 +86,9 @@ class TradingEnv(gym.Env):
         self.window_size = window_size
         self.episode_length = episode_length
         self.initial_balance = initial_balance
+        self._simple_actions = simple_actions
+        self._fixed_size_pct = fixed_size_pct
+        self._fixed_leverage = fixed_leverage
 
         # Ensure open_time is datetime
         if not pd.api.types.is_datetime64_any_dtype(self.df["open_time"]):
@@ -132,9 +138,12 @@ class TradingEnv(gym.Env):
                 ),
             }
         )
-        self.action_space = spaces.MultiDiscrete(
-            [N_DIRECTIONS, N_POSITION_SIZES, N_LEVERAGE_LEVELS]
-        )
+        if self._simple_actions:
+            self.action_space = spaces.Discrete(3)  # 0=flat, 1=long, 2=short
+        else:
+            self.action_space = spaces.MultiDiscrete(
+                [N_DIRECTIONS, N_POSITION_SIZES, N_LEVERAGE_LEVELS]
+            )
 
         # ── Reward configuration (mutable by CurriculumCallback) ───────
         self.reward_config: dict[str, float] = dict(DEFAULT_REWARD_CONFIG)
@@ -200,19 +209,26 @@ class TradingEnv(gym.Env):
         return obs, info
 
     def step(
-        self, action: np.ndarray | list | tuple
+        self, action: np.ndarray | int | np.integer | list | tuple
     ) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
-        direction_idx, size_idx, leverage_idx = int(action[0]), int(action[1]), int(action[2])
-
-        direction = direction_idx  # 0=flat, 1=long, 2=short
-
-        # Collapse flat actions: when direction=flat, size and leverage are irrelevant.
-        if direction == 0:
-            size_pct = 0.0
-            leverage = 1
+        if self._simple_actions:
+            direction = int(action)
+            if direction == 0:
+                size_pct, leverage = 0.0, 1
+            else:
+                size_pct = self._fixed_size_pct
+                leverage = self._fixed_leverage
         else:
-            size_pct = POSITION_SIZE_OPTIONS[size_idx]
-            leverage = LEVERAGE_OPTIONS[leverage_idx]
+            direction_idx, size_idx, leverage_idx = (
+                int(action[0]), int(action[1]), int(action[2])
+            )
+            direction = direction_idx  # 0=flat, 1=long, 2=short
+            if direction == 0:
+                size_pct = 0.0
+                leverage = 1
+            else:
+                size_pct = POSITION_SIZE_OPTIONS[size_idx]
+                leverage = LEVERAGE_OPTIONS[leverage_idx]
 
         current_price = float(self._close[self._current_idx])
         total_fees = 0.0
@@ -253,26 +269,33 @@ class TradingEnv(gym.Env):
             )
             total_fees += fee
         else:
-            # Same direction — check if size/leverage differs
-            current_leverage = self.account.leverage
-            if self.account.entry_price > 0:
-                current_notional = self.account.position_size * self.account.entry_price
-                current_size_pct_approx = (
-                    current_notional / (self.account.balance * current_leverage)
-                    if (self.account.balance * current_leverage) > 0
-                    else 0.0
-                )
+            # Same direction as current position
+            if self._simple_actions:
+                pass  # no-op: fixed size/leverage, nothing to modify
             else:
-                current_size_pct_approx = 0.0
+                # Check if size/leverage differs
+                current_leverage = self.account.leverage
+                if self.account.entry_price > 0:
+                    current_notional = self.account.position_size * self.account.entry_price
+                    current_size_pct_approx = (
+                        current_notional / (self.account.balance * current_leverage)
+                        if (self.account.balance * current_leverage) > 0
+                        else 0.0
+                    )
+                else:
+                    current_size_pct_approx = 0.0
 
-            if abs(size_pct - current_size_pct_approx) > 0.01 or leverage != current_leverage:
-                fee = self.account.modify_position(
-                    size_pct=size_pct,
-                    leverage=leverage,
-                    price=current_price,
-                )
-                total_fees += fee
-            # else: truly holding the same position, no action
+                if (
+                    abs(size_pct - current_size_pct_approx) > 0.01
+                    or leverage != current_leverage
+                ):
+                    fee = self.account.modify_position(
+                        size_pct=size_pct,
+                        leverage=leverage,
+                        price=current_price,
+                    )
+                    total_fees += fee
+                # else: truly holding the same position, no action
 
         # ── Apply funding if 8-hour boundary crossed ───────────────────
         if self._current_idx > 0:

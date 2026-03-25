@@ -1153,3 +1153,78 @@ class TestSimpleActionsConfig:
         assert config.simple_actions is False
         assert config.fixed_size_pct == 0.10
         assert config.fixed_leverage == 10
+
+
+class TestSimpleActions:
+    """Tests for the simple_actions=True 3-action mode."""
+
+    def test_action_space_is_discrete_3(self):
+        """simple_actions=True → Discrete(3) action space."""
+        env = TradingEnv(
+            df=_make_df(),
+            simple_actions=True,
+            fixed_size_pct=0.10,
+            fixed_leverage=10,
+        )
+        from gymnasium.spaces import Discrete
+        assert isinstance(env.action_space, Discrete)
+        assert env.action_space.n == 3
+
+    def test_default_actions_unchanged(self):
+        """simple_actions=False (default) → MultiDiscrete([3,4,3])."""
+        env = TradingEnv(df=_make_df())
+        from gymnasium.spaces import MultiDiscrete
+        assert isinstance(env.action_space, MultiDiscrete)
+
+    def test_step_long_opens_with_fixed_params(self):
+        """action=1 opens long with fixed_size_pct and fixed_leverage."""
+        env = TradingEnv(
+            df=_make_df(),
+            simple_actions=True,
+            fixed_size_pct=0.10,
+            fixed_leverage=10,
+        )
+        env.reset(seed=42)
+        _obs, _reward, _term, _trunc, info = env.step(1)  # long
+        assert info["position_side"] == "long"
+        assert info["leverage"] == 10
+
+    def test_step_flat_closes_position(self):
+        """action=0 closes an open position."""
+        env = TradingEnv(
+            df=_make_df(),
+            simple_actions=True,
+            fixed_size_pct=0.10,
+            fixed_leverage=10,
+        )
+        env.reset(seed=42)
+        env.step(1)  # open long
+        _obs, _reward, _term, _trunc, info = env.step(0)  # go flat
+        assert info["position_side"] == "flat"
+
+    def test_same_direction_is_noop(self):
+        """Repeating action=1 while long → no fees, no modification."""
+        env = TradingEnv(
+            df=_make_df(),
+            simple_actions=True,
+            fixed_size_pct=0.10,
+            fixed_leverage=10,
+        )
+        env.reset(seed=42)
+        _obs, _reward, _term, _trunc, info_open = env.step(1)  # open long
+        balance_after_open = info_open["balance"]
+        _obs, _reward, _term, _trunc, info_hold = env.step(1)  # repeat long
+        assert info_hold["fees"] == 0.0
+        # Balance unchanged by fees (only PnL may change)
+        assert info_hold["position_side"] == "long"
+
+    def test_gymnasium_check_env_simple(self):
+        """Gymnasium's check_env passes for simple_actions=True."""
+        from gymnasium.utils.env_checker import check_env
+        env = TradingEnv(
+            df=_make_df(),
+            simple_actions=True,
+            fixed_size_pct=0.10,
+            fixed_leverage=10,
+        )
+        check_env(env, skip_render_check=True)

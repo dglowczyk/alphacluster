@@ -94,6 +94,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Enable verbose logging",
     )
+    parser.add_argument(
+        "--simple-actions",
+        action="store_true",
+        help="Use simplified 3-action space (must match training mode)",
+    )
     return parser.parse_args(argv)
 
 
@@ -205,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         df=test_df,
         funding_df=funding_df,
         episode_length=min(len(test_df) - WINDOW_SIZE - 1, 2016),
+        simple_actions=args.simple_actions,
     )
 
     # ── Load model ───────────────────────────────────────────────────

@@ -50,6 +50,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Enable tournament callback during training",
     )
+    sub_train.add_argument(
+        "--simple-actions",
+        action="store_true",
+        help="Use simplified 3-action space",
+    )
 
     # --- evaluate ---
     sub_eval = subparsers.add_parser("evaluate", help="Evaluate a trained model")
@@ -69,6 +74,11 @@ def main(argv: list[str] | None = None) -> int:
         "--save-charts",
         action="store_true",
         help="Save charts to reports/ directory",
+    )
+    sub_eval.add_argument(
+        "--simple-actions",
+        action="store_true",
+        help="Use simplified 3-action space",
     )
 
     # --- tournament ---
@@ -146,6 +156,8 @@ def _cmd_train(args: argparse.Namespace) -> int:
     train_argv = ["--timesteps", str(args.timesteps)]
     if args.tournament:
         train_argv.append("--tournament")
+    if args.simple_actions:
+        train_argv.append("--simple-actions")
     return train_main(train_argv)
 
 
@@ -156,6 +168,8 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
     eval_argv = ["--model", args.model, "--episodes", str(args.episodes)]
     if args.save_charts:
         eval_argv.append("--save-charts")
+    if args.simple_actions:
+        eval_argv.append("--simple-actions")
     return evaluate_main(eval_argv)
 
 

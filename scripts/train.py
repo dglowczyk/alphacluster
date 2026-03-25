@@ -76,6 +76,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Disable curriculum learning",
     )
+    parser.add_argument(
+        "--simple-actions",
+        action="store_true",
+        help="Use simplified 3-action space (long/flat/short) with fixed size and leverage",
+    )
     return parser.parse_args(argv)
 
 
@@ -160,6 +165,9 @@ def _make_env(df, funding_df, config, seed):
             funding_df=funding_df,
             window_size=config.window_size,
             episode_length=config.episode_length,
+            simple_actions=config.simple_actions,
+            fixed_size_pct=config.fixed_size_pct,
+            fixed_leverage=config.fixed_leverage,
         )
         env.reset(seed=seed)
         return env
@@ -186,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
         config_overrides["n_envs"] = args.n_envs
     if args.no_curriculum:
         config_overrides["curriculum_enabled"] = False
+    if args.simple_actions:
+        config_overrides["simple_actions"] = True
     config = TrainingConfig(total_timesteps=args.timesteps, **config_overrides)
 
     # ── Create parallel training environments ─────────────────────────────
@@ -208,6 +218,9 @@ def main(argv: list[str] | None = None) -> int:
             funding_df=funding_df,
             window_size=config.window_size,
             episode_length=config.episode_length,
+            simple_actions=config.simple_actions,
+            fixed_size_pct=config.fixed_size_pct,
+            fixed_leverage=config.fixed_leverage,
         )
 
     eval_env = None
@@ -218,6 +231,9 @@ def main(argv: list[str] | None = None) -> int:
             funding_df=funding_df,
             window_size=config.window_size,
             episode_length=config.episode_length,
+            simple_actions=config.simple_actions,
+            fixed_size_pct=config.fixed_size_pct,
+            fixed_leverage=config.fixed_leverage,
         )
     else:
         print("Validation set too small for evaluation; skipping eval callback.")
@@ -233,6 +249,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Checkpoints: {checkpoint_dir}")
     print(f"  Parallel envs: {n_envs}")
     print(f"  Curriculum: {'enabled' if config.curriculum_enabled else 'disabled'}")
+    if config.simple_actions:
+        sz = config.fixed_size_pct
+        lv = config.fixed_leverage
+        print(f"  Simple actions: enabled (size={sz}, leverage={lv}x)")
     if args.tournament:
         print(f"  Tournament enabled (every {config.tournament_freq:,} steps)")
 

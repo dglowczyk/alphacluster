@@ -54,9 +54,7 @@ POSITION_SIZE_OPTIONS = [0.02, 0.05, 0.10, 0.15]
 # ---------------------------------------------------------------------------
 # Observation dimensions
 # ---------------------------------------------------------------------------
-# N_MARKET_FEATURES is derived from INDICATOR_COLUMNS to stay in sync automatically.
-# Deferred to end of module to avoid circular import: config → data.__init__ → downloader → config.
-N_MARKET_FEATURES: int = 0  # Set at module bottom by _init_n_market_features()
+N_MARKET_FEATURES = 19  # 5 OHLCV + 14 technical indicators
 N_ACCOUNT_FEATURES = 12
 LEVERAGE_OPTIONS = [5, 10, 15]
 
@@ -68,7 +66,7 @@ BATCH_SIZE = 256
 GAMMA = 0.99  # Discount factor
 GAE_LAMBDA = 0.95  # GAE lambda for PPO
 TOTAL_TIMESTEPS = 1_000_000
-MODEL_VERSION = "v4-funding-vol-regime"
+MODEL_VERSION = "v3-opportunity-cost"
 N_EPOCHS = 10  # PPO epochs per update
 
 # ---------------------------------------------------------------------------
@@ -85,21 +83,3 @@ BINANCE_BASE_URL = "https://fapi.binance.com"
 DEFAULT_SYMBOL = "BTCUSDT"
 DEFAULT_INTERVAL = "5m"
 
-
-# ---------------------------------------------------------------------------
-# Deferred initialization (circular import workaround)
-# ---------------------------------------------------------------------------
-def _init_n_market_features() -> None:
-    """Derive N_MARKET_FEATURES from INDICATOR_COLUMNS length.
-
-    Called at module load time, after all other constants are defined so that
-    the circular import (config → data.indicators → data.__init__ → downloader
-    → config) resolves safely.
-    """
-    global N_MARKET_FEATURES  # noqa: PLW0603
-    from alphacluster.data.indicators import INDICATOR_COLUMNS
-
-    N_MARKET_FEATURES = 5 + len(INDICATOR_COLUMNS)  # 5 OHLCV + indicators
-
-
-_init_n_market_features()

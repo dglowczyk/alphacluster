@@ -95,7 +95,7 @@ class TradingEnv(gym.Env):
             self.df["open_time"] = pd.to_datetime(self.df["open_time"], unit="ms", utc=True)
 
         # Compute technical indicators
-        self.df = compute_indicators(self.df, funding_df=funding_df)
+        self.df = compute_indicators(self.df)
 
         # Pre-compute OHLCV numpy arrays for speed
         self._open = self.df["open"].to_numpy(dtype=np.float64)

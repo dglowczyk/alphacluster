@@ -5,6 +5,7 @@
 /data/
 /models/
 /reports/
+/ablation_results/
 
 # Environment secrets
 .env

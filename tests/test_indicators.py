@@ -125,8 +125,8 @@ class TestComputeIndicators:
             assert not result[col].isna().any()
 
     def test_indicator_count(self):
-        """Should have exactly 17 indicator columns."""
-        assert len(INDICATOR_COLUMNS) == 17
+        """Should have exactly 20 indicator columns."""
+        assert len(INDICATOR_COLUMNS) == 20
 
     def test_returns_are_small(self):
         """Return features should be small for normal price data."""
@@ -225,3 +225,57 @@ class TestFundingFeatures:
         assert cum.abs().max() < 10.0, (
             f"funding_cumulative_24h seems too large: max={cum.abs().max()}"
         )
+
+
+class TestVolRegimeFeatures:
+    """Tests for volatility regime indicator features."""
+
+    def test_vol_regime_columns_present(self):
+        df = _make_ohlcv(n=500)
+        result = compute_indicators(df)
+        for col in ["vol_percentile", "vol_of_vol", "vol_regime"]:
+            assert col in result.columns, f"Missing column: {col}"
+
+    def test_vol_regime_no_nans(self):
+        df = _make_ohlcv(n=500)
+        result = compute_indicators(df)
+        for col in ["vol_percentile", "vol_of_vol", "vol_regime"]:
+            assert not result[col].isna().any(), f"NaN found in {col}"
+
+    def test_vol_regime_all_finite(self):
+        df = _make_ohlcv(n=500)
+        result = compute_indicators(df)
+        for col in ["vol_percentile", "vol_of_vol", "vol_regime"]:
+            assert np.all(np.isfinite(result[col].values)), f"Non-finite in {col}"
+
+    def test_vol_percentile_range(self):
+        df = _make_ohlcv(n=500)
+        result = compute_indicators(df)
+        vals = result["vol_percentile"].values
+        assert vals.min() >= 0.0 - 0.01
+        assert vals.max() <= 1.0 + 0.01
+
+    def test_vol_regime_values(self):
+        df = _make_ohlcv(n=500)
+        result = compute_indicators(df)
+        unique = set(result["vol_regime"].unique())
+        assert unique.issubset({-1.0, 0.0, 1.0}), f"Unexpected values: {unique}"
+
+    def test_vol_regime_bucketization(self):
+        df = _make_ohlcv(n=500)
+        result = compute_indicators(df)
+        pct = result["vol_percentile"].values
+        regime = result["vol_regime"].values
+        for i in range(len(pct)):
+            if pct[i] < 0.25:
+                assert regime[i] == -1.0
+            elif pct[i] > 0.75:
+                assert regime[i] == 1.0
+            else:
+                assert regime[i] == 0.0
+
+    def test_small_df_vol_regime(self):
+        df = _make_ohlcv(n=10)
+        result = compute_indicators(df)
+        for col in ["vol_percentile", "vol_of_vol", "vol_regime"]:
+            assert not result[col].isna().any(), f"NaN in {col} with small df"

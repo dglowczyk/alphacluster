@@ -54,7 +54,7 @@ POSITION_SIZE_OPTIONS = [0.02, 0.05, 0.10, 0.15]
 # ---------------------------------------------------------------------------
 # Observation dimensions
 # ---------------------------------------------------------------------------
-N_MARKET_FEATURES = 22  # 5 OHLCV + 17 technical indicators
+N_MARKET_FEATURES = 25  # 5 OHLCV + 20 technical indicators
 N_ACCOUNT_FEATURES = 12
 LEVERAGE_OPTIONS = [5, 10, 15]
 

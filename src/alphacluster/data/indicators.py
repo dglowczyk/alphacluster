@@ -10,23 +10,33 @@ import numpy as np
 import pandas as pd
 
 
-def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
+def compute_indicators(
+    df: pd.DataFrame,
+    funding_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Compute technical indicators and append them as columns to *df*.
 
-    Adds 14 indicator columns to the DataFrame.  NaN values from warmup
+    Adds 17 indicator columns to the DataFrame.  NaN values from warmup
     periods are forward/back-filled so every row has valid data.
 
     Parameters
     ----------
     df:
         DataFrame with at least ``open, high, low, close, volume`` columns.
+    funding_df:
+        Optional DataFrame with funding rate data containing ``funding_time``,
+        ``funding_rate``, and ``mark_price`` columns (8-hourly from Binance).
+        When provided, adds ``funding_rate``, ``funding_cumulative_24h``, and
+        ``funding_premium`` columns.  When ``None``, those columns default to 0.0.
 
     Returns
     -------
     pd.DataFrame
-        A copy of *df* with 14 additional indicator columns.
+        A copy of *df* with 17 additional indicator columns.
     """
     df = df.copy()
+    if "open_time" in df.columns and not pd.api.types.is_datetime64_any_dtype(df["open_time"]):
+        df["open_time"] = pd.to_datetime(df["open_time"], utc=True)
     close = df["close"]
     high = df["high"]
     low = df["low"]
@@ -71,6 +81,44 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # ── VWAP distance ─────────────────────────────────────────────────
     df["vwap_dist"] = _vwap_distance(close, high, low, volume)
 
+    # ── Funding rate features ──────────────────────────────────────────
+    if funding_df is not None and "open_time" in df.columns:
+        fdf = funding_df.copy()
+        if not pd.api.types.is_datetime64_any_dtype(fdf["funding_time"]):
+            fdf["funding_time"] = pd.to_datetime(fdf["funding_time"], utc=True)
+
+        fdf = fdf.sort_values("funding_time")
+        fdf["funding_cumulative_24h"] = fdf["funding_rate"].rolling(3, min_periods=1).sum()
+
+        # Funding premium: mark_price / nearest close - 1
+        fdf_with_close = pd.merge_asof(
+            fdf.sort_values("funding_time"),
+            df[["open_time", "close"]]
+            .rename(columns={"open_time": "funding_time", "close": "close_at_funding"})
+            .sort_values("funding_time"),
+            on="funding_time",
+            direction="nearest",
+        )
+        close_at_f = fdf_with_close["close_at_funding"].replace(0, np.nan)
+        fdf["funding_premium"] = (fdf_with_close["mark_price"] / close_at_f - 1.0).values
+
+        merge_cols = ["funding_time", "funding_rate", "funding_cumulative_24h", "funding_premium"]
+        df = pd.merge_asof(
+            df.sort_values("open_time"),
+            fdf[merge_cols].sort_values("funding_time"),
+            left_on="open_time",
+            right_on="funding_time",
+            direction="backward",
+        )
+
+        df["funding_rate"] = df["funding_rate"].fillna(0.0) * 100
+        df["funding_cumulative_24h"] = df["funding_cumulative_24h"].fillna(0.0) * 100
+        df["funding_premium"] = df["funding_premium"].fillna(0.0)
+    else:
+        df["funding_rate"] = 0.0
+        df["funding_cumulative_24h"] = 0.0
+        df["funding_premium"] = 0.0
+
     # ── Fill NaNs from warmup periods ─────────────────────────────────
     indicator_cols = [
         "return_1",
@@ -87,6 +135,9 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         "volume_ratio_20",
         "obv_slope",
         "vwap_dist",
+        "funding_rate",
+        "funding_cumulative_24h",
+        "funding_premium",
     ]
     df[indicator_cols] = df[indicator_cols].ffill().bfill().fillna(0.0)
 
@@ -108,8 +159,11 @@ INDICATOR_COLUMNS: list[str] = [
     "volume_ratio_20",
     "obv_slope",
     "vwap_dist",
+    "funding_rate",
+    "funding_cumulative_24h",
+    "funding_premium",
 ]
-"""Names of the 14 indicator columns added by :func:`compute_indicators`."""
+"""Names of the 17 indicator columns added by :func:`compute_indicators`."""
 
 
 # ── Private helpers ───────────────────────────────────────────────────────

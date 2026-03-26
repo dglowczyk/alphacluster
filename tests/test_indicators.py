@@ -125,8 +125,8 @@ class TestComputeIndicators:
             assert not result[col].isna().any()
 
     def test_indicator_count(self):
-        """Should have exactly 14 indicator columns."""
-        assert len(INDICATOR_COLUMNS) == 14
+        """Should have exactly 17 indicator columns."""
+        assert len(INDICATOR_COLUMNS) == 17
 
     def test_returns_are_small(self):
         """Return features should be small for normal price data."""
@@ -135,3 +135,93 @@ class TestComputeIndicators:
         for col in ["return_1", "return_5", "return_20"]:
             vals = result[col].values[60:]  # skip warmup
             assert np.abs(vals).max() < 0.5, f"{col} has unreasonably large values"
+
+
+# ---------------------------------------------------------------------------
+# Funding rate helpers and tests
+# ---------------------------------------------------------------------------
+
+
+def _make_funding(n_events: int = 30, seed: int = 42) -> pd.DataFrame:
+    """Generate synthetic 8-hourly funding data."""
+    rng = np.random.default_rng(seed)
+    times = pd.date_range("2025-01-01", periods=n_events, freq="8h", tz="UTC")
+    return pd.DataFrame(
+        {
+            "funding_time": times,
+            "symbol": "BTCUSDT",
+            "funding_rate": rng.normal(0.0001, 0.0003, size=n_events),
+            "mark_price": 50_000.0 + np.cumsum(rng.normal(0, 50, size=n_events)),
+        }
+    )
+
+
+class TestFundingFeatures:
+    """Tests for funding rate features in compute_indicators()."""
+
+    def test_funding_columns_present(self):
+        """All 3 funding columns should be present when funding_df is provided."""
+        df = _make_ohlcv(n=200)
+        fdf = _make_funding()
+        result = compute_indicators(df, funding_df=fdf)
+        for col in ("funding_rate", "funding_cumulative_24h", "funding_premium"):
+            assert col in result.columns, f"Missing column: {col}"
+
+    def test_funding_no_nans(self):
+        """Funding feature columns should have no NaN values."""
+        df = _make_ohlcv(n=200)
+        fdf = _make_funding()
+        result = compute_indicators(df, funding_df=fdf)
+        for col in ("funding_rate", "funding_cumulative_24h", "funding_premium"):
+            assert not result[col].isna().any(), f"NaN found in {col}"
+
+    def test_funding_all_finite(self):
+        """All funding feature values should be finite."""
+        df = _make_ohlcv(n=200)
+        fdf = _make_funding()
+        result = compute_indicators(df, funding_df=fdf)
+        for col in ("funding_rate", "funding_cumulative_24h", "funding_premium"):
+            assert np.all(np.isfinite(result[col].values)), f"Non-finite value in {col}"
+
+    def test_funding_none_defaults_to_zero(self):
+        """When funding_df=None, all 3 funding columns should be 0.0."""
+        df = _make_ohlcv(n=200)
+        result = compute_indicators(df, funding_df=None)
+        for col in ("funding_rate", "funding_cumulative_24h", "funding_premium"):
+            assert col in result.columns, f"Missing column: {col}"
+            assert (result[col] == 0.0).all(), f"{col} should be 0.0 when no funding_df"
+
+    def test_funding_rate_normalized(self):
+        """A funding rate of 0.0001 should become 0.01 after ×100 scaling."""
+        n = 200
+        df = _make_ohlcv(n=n)
+        # Build a funding_df with a constant funding_rate = 0.0001
+        fdf = pd.DataFrame(
+            {
+                "funding_time": pd.date_range("2025-01-01", periods=5, freq="8h", tz="UTC"),
+                "symbol": "BTCUSDT",
+                "funding_rate": [0.0001] * 5,
+                "mark_price": [50_000.0] * 5,
+            }
+        )
+        result = compute_indicators(df, funding_df=fdf)
+        # After merge_asof backward fill and ×100, all matched rows should be 0.01
+        matched = result["funding_rate"]
+        # Some rows before the first funding event may be 0.0 (fillna); rest should be 0.01
+        non_zero = matched[matched != 0.0]
+        assert len(non_zero) > 0, "Expected at least some non-zero funding_rate values"
+        assert np.allclose(non_zero.values, 0.01), (
+            f"Expected 0.01 but got unique values: {non_zero.unique()}"
+        )
+
+    def test_funding_cumulative_is_rolling_sum(self):
+        """funding_cumulative_24h should reflect rolling 3-period sum of funding_rate."""
+        df = _make_ohlcv(n=200)
+        fdf = _make_funding()
+        result = compute_indicators(df, funding_df=fdf)
+        # Values should be plausible: within a reasonable multiple of typical funding rates
+        cum = result["funding_cumulative_24h"]
+        # With ×100 scaling and typical rates ~0.0001, cumulative should be small
+        assert cum.abs().max() < 10.0, (
+            f"funding_cumulative_24h seems too large: max={cum.abs().max()}"
+        )

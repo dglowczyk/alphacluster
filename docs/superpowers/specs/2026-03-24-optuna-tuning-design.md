@@ -64,7 +64,7 @@ phase-specific configs using fixed phase multiplier vectors:
 
 ```
 Phase 1 multipliers: {fee: 0.5, churn: 0.5, opp: 0.3, dd: 0.3, quality: 1.0, pos_mgmt: 1.0}
-Phase 2 multipliers: {fee: 1.0, churn: 1.0, opp: 1.0, dd: 1.0, quality: 1.0, pos_mgmt: 1.0}
+Phase 2 multipliers: {fee: 1.0, churn: 1.0, opp: 0.5, dd: 1.0, quality: 1.0, pos_mgmt: 1.0}
 Phase 3 multipliers: {fee: phase3_fee_mult, churn: phase3_churn_mult,
                        opp: 1.0, dd: 1.5, quality: 0.5, pos_mgmt: 1.0}
 ```

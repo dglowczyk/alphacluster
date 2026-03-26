@@ -279,3 +279,21 @@ class TestVolRegimeFeatures:
         result = compute_indicators(df)
         for col in ["vol_percentile", "vol_of_vol", "vol_regime"]:
             assert not result[col].isna().any(), f"NaN in {col} with small df"
+
+
+# ---------------------------------------------------------------------------
+# Config consistency tests
+# ---------------------------------------------------------------------------
+
+
+class TestConfigConsistency:
+    """Verify config.N_MARKET_FEATURES stays in sync with INDICATOR_COLUMNS."""
+
+    def test_n_market_features_matches_indicator_columns(self):
+        from alphacluster.config import N_MARKET_FEATURES
+
+        expected = 5 + len(INDICATOR_COLUMNS)  # 5 OHLCV + indicators
+        assert N_MARKET_FEATURES == expected, (
+            f"N_MARKET_FEATURES={N_MARKET_FEATURES} but "
+            f"5 + len(INDICATOR_COLUMNS)={expected}"
+        )

@@ -219,9 +219,7 @@ class TradingEnv(gym.Env):
                 size_pct = self._fixed_size_pct
                 leverage = self._fixed_leverage
         else:
-            direction_idx, size_idx, leverage_idx = (
-                int(action[0]), int(action[1]), int(action[2])
-            )
+            direction_idx, size_idx, leverage_idx = (int(action[0]), int(action[1]), int(action[2]))
             direction = direction_idx  # 0=flat, 1=long, 2=short
             if direction == 0:
                 size_pct = 0.0
@@ -285,10 +283,7 @@ class TradingEnv(gym.Env):
                 else:
                     current_size_pct_approx = 0.0
 
-                if (
-                    abs(size_pct - current_size_pct_approx) > 0.01
-                    or leverage != current_leverage
-                ):
+                if abs(size_pct - current_size_pct_approx) > 0.01 or leverage != current_leverage:
                     fee = self.account.modify_position(
                         size_pct=size_pct,
                         leverage=leverage,

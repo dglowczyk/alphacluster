@@ -596,9 +596,7 @@ def train(
     # ── Curriculum callback ──────────────────────────────────────────
     if config.curriculum_enabled:
         callbacks.append(
-            CurriculumCallback(
-                config, verbose=verbose, base_reward_config=base_reward_config
-            )
+            CurriculumCallback(config, verbose=verbose, base_reward_config=base_reward_config)
         )
 
     # ── Tournament callback ──────────────────────────────────────────

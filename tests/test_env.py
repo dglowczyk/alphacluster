@@ -1201,6 +1201,7 @@ class TestSimpleActions:
             fixed_leverage=10,
         )
         from gymnasium.spaces import Discrete
+
         assert isinstance(env.action_space, Discrete)
         assert env.action_space.n == 3
 
@@ -1208,6 +1209,7 @@ class TestSimpleActions:
         """simple_actions=False (default) → MultiDiscrete([3,4,3])."""
         env = TradingEnv(df=_make_df())
         from gymnasium.spaces import MultiDiscrete
+
         assert isinstance(env.action_space, MultiDiscrete)
 
     def test_step_long_opens_with_fixed_params(self):
@@ -1255,6 +1257,7 @@ class TestSimpleActions:
     def test_gymnasium_check_env_simple(self):
         """Gymnasium's check_env passes for simple_actions=True."""
         from gymnasium.utils.env_checker import check_env
+
         env = TradingEnv(
             df=_make_df(),
             simple_actions=True,

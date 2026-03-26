@@ -17,9 +17,9 @@ class TrainingConfig:
     episode_length: int = 2016  # 1 week of 5-min candles
 
     # ── Simple action mode ─────────────────────────────────────────────
-    simple_actions: bool = False       # True → Discrete(3), False → MultiDiscrete([3,4,3])
-    fixed_size_pct: float = 0.10       # position size when simple_actions=True
-    fixed_leverage: int = 10           # leverage when simple_actions=True
+    simple_actions: bool = False  # True → Discrete(3), False → MultiDiscrete([3,4,3])
+    fixed_size_pct: float = 0.10  # position size when simple_actions=True
+    fixed_leverage: int = 10  # leverage when simple_actions=True
 
     # ── PPO ───────────────────────────────────────────────────────────────
     learning_rate: float = 3e-4

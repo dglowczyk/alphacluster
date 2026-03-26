@@ -294,6 +294,5 @@ class TestConfigConsistency:
 
         expected = 5 + len(INDICATOR_COLUMNS)  # 5 OHLCV + indicators
         assert N_MARKET_FEATURES == expected, (
-            f"N_MARKET_FEATURES={N_MARKET_FEATURES} but "
-            f"5 + len(INDICATOR_COLUMNS)={expected}"
+            f"N_MARKET_FEATURES={N_MARKET_FEATURES} but 5 + len(INDICATOR_COLUMNS)={expected}"
         )

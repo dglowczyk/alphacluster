@@ -513,6 +513,7 @@ def train(
     progress_bar: bool = True,
     verbose: int = 1,
     extra_callbacks: list[BaseCallback] | None = None,
+    base_reward_config: dict[str, float] | None = None,
 ) -> PPO:
     """Train the agent with evaluation, checkpointing, and optional tournament hooks.
 
@@ -535,6 +536,10 @@ def train(
         Verbosity level for callbacks (0=silent, 1=info).
     extra_callbacks:
         Additional callbacks to include in the training loop.
+    base_reward_config:
+        Optional dict overriding default base scales for CurriculumCallback.
+        Keys are reward config names (e.g. ``fee_scale``).  Phase-specific
+        values are computed as ``base × phase_multiplier``.
 
     Returns
     -------
@@ -590,7 +595,11 @@ def train(
 
     # ── Curriculum callback ──────────────────────────────────────────
     if config.curriculum_enabled:
-        callbacks.append(CurriculumCallback(config, verbose=verbose))
+        callbacks.append(
+            CurriculumCallback(
+                config, verbose=verbose, base_reward_config=base_reward_config
+            )
+        )
 
     # ── Tournament callback ──────────────────────────────────────────
     if run_tournament:

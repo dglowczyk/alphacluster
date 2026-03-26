@@ -1145,6 +1145,40 @@ class TestCurriculumCallback:
         assert cb._get_phase_ent_coef(2) == pytest.approx(0.048)  # 0.08 * 0.6
         assert cb._get_phase_ent_coef(3) == pytest.approx(0.008)  # 0.08 * 0.1
 
+    def test_train_passes_base_reward_config(self):
+        """train() should forward base_reward_config to CurriculumCallback."""
+        from unittest.mock import MagicMock, patch
+
+        from stable_baselines3.common.vec_env import DummyVecEnv
+
+        from alphacluster.agent.trainer import create_agent, train
+
+        config = TrainingConfig(
+            total_timesteps=128,
+            n_steps=64,
+            batch_size=64,
+            curriculum_enabled=True,
+            eval_freq=10_000,
+        )
+        env = DummyVecEnv([lambda: TradingEnv(df=_make_df(), simple_actions=True)])
+
+        base_cfg = {"fee_scale": 0.0, "churn_penalty_scale": 0.0}
+
+        with patch("alphacluster.agent.trainer.CurriculumCallback") as MockCB:
+            MockCB.return_value = MagicMock()
+            MockCB.return_value._on_step = MagicMock(return_value=True)
+            agent = create_agent(env, config)
+            train(
+                agent=agent,
+                config=config,
+                base_reward_config=base_cfg,
+                progress_bar=False,
+                verbose=0,
+            )
+            MockCB.assert_called_once()
+            call_kwargs = MockCB.call_args
+            assert call_kwargs.kwargs.get("base_reward_config") == base_cfg
+
 
 class TestSimpleActionsConfig:
     def test_default_simple_actions_false(self):

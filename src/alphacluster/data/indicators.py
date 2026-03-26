@@ -92,23 +92,30 @@ def compute_indicators(
     # ── Funding rate features ──────────────────────────────────────────
     if funding_df is not None and "open_time" in df.columns:
         fdf = funding_df.copy()
+        # Support both "funding_time" (Binance) and "time" column names
+        time_col = "funding_time" if "funding_time" in fdf.columns else "time"
+        if time_col != "funding_time":
+            fdf = fdf.rename(columns={time_col: "funding_time"})
         if not pd.api.types.is_datetime64_any_dtype(fdf["funding_time"]):
             fdf["funding_time"] = pd.to_datetime(fdf["funding_time"], utc=True)
 
         fdf = fdf.sort_values("funding_time")
         fdf["funding_cumulative_24h"] = fdf["funding_rate"].rolling(3, min_periods=1).sum()
 
-        # Funding premium: mark_price / nearest close - 1
-        fdf_with_close = pd.merge_asof(
-            fdf.sort_values("funding_time"),
-            df[["open_time", "close"]]
-            .rename(columns={"open_time": "funding_time", "close": "close_at_funding"})
-            .sort_values("funding_time"),
-            on="funding_time",
-            direction="nearest",
-        )
-        close_at_f = fdf_with_close["close_at_funding"].replace(0, np.nan)
-        fdf["funding_premium"] = (fdf_with_close["mark_price"] / close_at_f - 1.0).values
+        # Funding premium: mark_price / nearest close - 1 (mark_price is optional)
+        if "mark_price" in fdf.columns:
+            fdf_with_close = pd.merge_asof(
+                fdf.sort_values("funding_time"),
+                df[["open_time", "close"]]
+                .rename(columns={"open_time": "funding_time", "close": "close_at_funding"})
+                .sort_values("funding_time"),
+                on="funding_time",
+                direction="nearest",
+            )
+            close_at_f = fdf_with_close["close_at_funding"].replace(0, np.nan)
+            fdf["funding_premium"] = (fdf_with_close["mark_price"] / close_at_f - 1.0).values
+        else:
+            fdf["funding_premium"] = 0.0
 
         merge_cols = ["funding_time", "funding_rate", "funding_cumulative_24h", "funding_premium"]
         df = pd.merge_asof(

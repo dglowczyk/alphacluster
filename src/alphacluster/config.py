@@ -68,7 +68,7 @@ BATCH_SIZE = 256
 GAMMA = 0.99  # Discount factor
 GAE_LAMBDA = 0.95  # GAE lambda for PPO
 TOTAL_TIMESTEPS = 1_000_000
-MODEL_VERSION = "v3-opportunity-cost"
+MODEL_VERSION = "v4-funding-vol-regime"
 N_EPOCHS = 10  # PPO epochs per update
 
 # ---------------------------------------------------------------------------

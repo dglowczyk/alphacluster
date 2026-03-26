@@ -16,7 +16,7 @@ src/alphacluster/
     downloader.py    - Binance Futures API client (klines + funding rates) with pagination
     storage.py       - Parquet save/load, incremental append, deduplication
     validator.py     - Gap detection, NaN checks, outlier flagging, interpolation
-    indicators.py    - Technical indicators (14 features: RSI, MACD, Bollinger, ATR, etc.)
+    indicators.py    - Technical indicators (20 features: 14 technical + 3 funding + 3 vol regime)
     live_feed.py     - Historical data source for backtesting (loads from parquet)
   env/
     mechanics.py     - Stateless helpers: fee, funding, PnL, liquidation, slippage
@@ -64,11 +64,11 @@ make tournament      # Run ELO tournament
 
 ## Design Decisions
 
-1. **OHLCV + Technical Indicators** -- The observation includes 5 raw OHLCV features plus 14 normalized technical indicators (returns, volatility, RSI, MACD, Bollinger Bands, ATR, volume ratio, OBV slope, VWAP distance). All computed in `data/indicators.py`.
+1. **OHLCV + Technical Indicators** -- The observation includes 5 raw OHLCV features plus 20 indicators (14 technical + 3 funding + 3 vol regime). Technical: returns, volatility, RSI, MACD, Bollinger Bands, ATR, volume ratio, OBV slope, VWAP distance. Funding: funding rate, cumulative funding (8h/24h). Vol regime: realized volatility ratio, ATR regime, volume regime. All computed in `data/indicators.py`.
 
 2. **Discrete action space (36 actions)**: direction (long/short/flat=3) x position size (2%/5%/10%/15%=4) x leverage (5x/10x/15x=3). No 0% size option — choosing long/short always opens a position; flat is the only way to have no position.
 
-3. **Observation space**: Market observation is (576, 19) — 576 candles x 19 features. Account observation is (12,) — 7 original features + 5 trade-tracking features (steps since trade, last PnL, trade count, unrealized PnL velocity, running win rate).
+3. **Observation space**: Market observation is (576, 25) — 576 candles x 25 features. Account observation is (12,) — 7 original features + 5 trade-tracking features (steps since trade, last PnL, trade count, unrealized PnL velocity, running win rate).
 
 4. **Episode length**: 2016 candles (= 7 days of 5-min data).
 
@@ -87,7 +87,7 @@ make tournament      # Run ELO tournament
    - Phase 2 (30-60%): "Learn Quality" — reduced exploration (0.03), opportunity_cost_scale=0.5, full cost penalties
    - Phase 3 (60-100%): "Refine & Exploit" — low entropy (0.005), opportunity_cost_scale=1.0, amplified fee (2.0x) and churn (2.0x) penalties
 
-7. **CNN+Transformer feature extractor**: 2 Conv1d layers compress (576, 19) → (144, 128), then 3-layer Transformer encoder (4 heads, d_model=128) with learnable positional encoding, adaptive pooling to 128-dim. Account MLP outputs 64-dim. Total: 192-dim feature vector.
+7. **CNN+Transformer feature extractor**: 2 Conv1d layers compress (576, 25) → (144, 128), then 3-layer Transformer encoder (4 heads, d_model=128) with learnable positional encoding, adaptive pooling to 128-dim. Account MLP outputs 64-dim. Total: 192-dim feature vector.
 
 8. **Parallel training**: SubprocVecEnv with 4 environments + VecNormalize for reward normalization.
 
@@ -103,7 +103,7 @@ make tournament      # Run ELO tournament
 - WINDOW_SIZE = 576, EPISODE_LENGTH = 2016
 - N_ACTIONS = 36 (3 x 4 x 3), POSITION_SIZE_OPTIONS = [0.02, 0.05, 0.10, 0.15]
 - LEVERAGE_OPTIONS = [5, 10, 15]
-- N_MARKET_FEATURES = 19, N_ACCOUNT_FEATURES = 12
+- N_MARKET_FEATURES = 25 (auto-derived: 5 OHLCV + 20 indicators), N_ACCOUNT_FEATURES = 12
 - MAX_LEVERAGE = 15
 - LEARNING_RATE = 3e-4, BATCH_SIZE = 128, GAMMA = 0.995
 - TOTAL_TIMESTEPS = 2_000_000

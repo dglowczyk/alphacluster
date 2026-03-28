@@ -35,11 +35,6 @@ format:
 	$(VENV)/bin/ruff check --fix src/ tests/
 	$(VENV)/bin/ruff format src/ tests/
 
-signals:
-	@ssh $(HOST) "journalctl --user -u opencluster-monitor --no-pager -n 5000" \
-		| grep -E "SIGNAL|EXECUTED|CLOSED|AUTO-TUNE" \
-		| tail -n $(or $(N),50)
-
 clean:
 	rm -rf $(VENV) data/ models/ __pycache__ .pytest_cache
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

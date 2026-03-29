@@ -287,30 +287,59 @@ def download_funding_rates(
     return df
 
 
-# Maximum open interest records per request.
-_MAX_OI_PER_REQUEST = 500
+COINALYZE_BASE_URL = "https://api.coinalyze.net/v1"
+
+
+def _binance_to_coinalyze_symbol(symbol: str) -> str:
+    """Convert Binance symbol (e.g. BTCUSDT) to Coinalyze format (BTCUSDT_PERP.A)."""
+    return f"{symbol}_PERP.A"
+
+
+def _coinalyze_date_params(
+    start_date: datetime | str | None,
+    end_date: datetime | str | None,
+) -> tuple[datetime, datetime]:
+    """Normalize date params for Coinalyze API."""
+    if isinstance(start_date, str):
+        start_date = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
+    if isinstance(end_date, str):
+        end_date = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
+    if start_date is None:
+        start_date = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    if end_date is None:
+        end_date = datetime.now(tz=timezone.utc)
+    if start_date.tzinfo is None:
+        start_date = start_date.replace(tzinfo=timezone.utc)
+    if end_date.tzinfo is None:
+        end_date = end_date.replace(tzinfo=timezone.utc)
+    return start_date, end_date
 
 
 def download_open_interest(
     symbol: str = DEFAULT_SYMBOL,
     start_date: datetime | str | None = None,
     end_date: datetime | str | None = None,
-    period: str = "5m",
+    interval: str = "daily",
     *,
+    api_key: str | None = None,
     session: requests.Session | None = None,
     progress_callback: callable | None = None,
 ) -> pd.DataFrame:
-    """Fetch open interest history from the Binance Futures API.
+    """Fetch open interest history from the Coinalyze API.
+
+    Uses daily resolution by default (all-time history available).
 
     Parameters
     ----------
     symbol:
-        Trading pair, e.g. ``"BTCUSDT"``.
+        Binance-style trading pair, e.g. ``"BTCUSDT"``.
+        Automatically converted to Coinalyze format.
     start_date, end_date:
         Date range (inclusive).  ``end_date`` defaults to now.
-    period:
-        Data period: ``"5m"``, ``"15m"``, ``"30m"``, ``"1h"``, ``"2h"``,
-        ``"4h"``, ``"6h"``, ``"12h"``, ``"1d"``.
+    interval:
+        ``"daily"``, ``"4hour"``, ``"1hour"``, etc.
+    api_key:
+        Coinalyze API key. Falls back to ``COINALYZE_API_KEY`` env var.
     session:
         Optional ``requests.Session``.
     progress_callback:
@@ -321,189 +350,125 @@ def download_open_interest(
     pd.DataFrame
         Columns: ``timestamp, symbol, sum_open_interest, sum_open_interest_value``.
     """
-    if isinstance(start_date, str):
-        start_date = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
-    if isinstance(end_date, str):
-        end_date = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
+    import os
 
-    if start_date is None:
-        start_date = datetime(2020, 1, 1, tzinfo=timezone.utc)
-    if end_date is None:
-        end_date = datetime.now(tz=timezone.utc)
-
-    if start_date.tzinfo is None:
-        start_date = start_date.replace(tzinfo=timezone.utc)
-    if end_date.tzinfo is None:
-        end_date = end_date.replace(tzinfo=timezone.utc)
-
-    sess = session or requests.Session()
-    url = f"{BINANCE_BASE_URL}/futures/data/openInterestHist"
-
-    all_rows: list[dict] = []
-    current_start_ms = _ts_ms(start_date)
-    end_ms = _ts_ms(end_date)
-    last_request_time = 0.0
-
-    while current_start_ms < end_ms:
-        elapsed = time.monotonic() - last_request_time
-        if elapsed < _MIN_REQUEST_INTERVAL_S:
-            time.sleep(_MIN_REQUEST_INTERVAL_S - elapsed)
-
-        params = {
-            "symbol": symbol,
-            "period": period,
-            "startTime": current_start_ms,
-            "endTime": end_ms,
-            "limit": _MAX_OI_PER_REQUEST,
-        }
-
-        last_request_time = time.monotonic()
-        resp = sess.get(url, params=params, timeout=30)
-        if resp.status_code == 400:
-            logger.warning(
-                "[%s] OI endpoint returned 400 at startTime=%d — no data available",
-                symbol,
-                current_start_ms,
-            )
-            break
-        resp.raise_for_status()
-        data = resp.json()
-
-        if not data:
-            break
-
-        all_rows.extend(data)
-
-        if progress_callback is not None:
-            progress_callback(len(data))
-
-        last_time = int(data[-1]["timestamp"])
-        current_start_ms = last_time + 1
-
-        if len(data) < _MAX_OI_PER_REQUEST:
-            break
-
-    if not all_rows:
+    key = api_key or os.environ.get("COINALYZE_API_KEY", "")
+    if not key:
+        logger.warning("No Coinalyze API key — returning empty OI DataFrame")
         return pd.DataFrame(
             columns=["timestamp", "symbol", "sum_open_interest", "sum_open_interest_value"]
         )
 
-    df = pd.DataFrame(all_rows)
-    df = df.rename(
-        columns={
-            "sumOpenInterest": "sum_open_interest",
-            "sumOpenInterestValue": "sum_open_interest_value",
-        }
-    )
-    df["sum_open_interest"] = pd.to_numeric(df["sum_open_interest"], errors="coerce")
-    df["sum_open_interest_value"] = pd.to_numeric(df["sum_open_interest_value"], errors="coerce")
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    start_date, end_date = _coinalyze_date_params(start_date, end_date)
+    ca_symbol = _binance_to_coinalyze_symbol(symbol)
+    sess = session or requests.Session()
 
+    resp = sess.get(
+        f"{COINALYZE_BASE_URL}/open-interest-history",
+        params={
+            "api_key": key,
+            "symbols": ca_symbol,
+            "interval": interval,
+            "from": int(start_date.timestamp()),
+            "to": int(end_date.timestamp()),
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    if not data or not data[0].get("history"):
+        return pd.DataFrame(
+            columns=["timestamp", "symbol", "sum_open_interest", "sum_open_interest_value"]
+        )
+
+    history = data[0]["history"]
+    if progress_callback is not None:
+        progress_callback(len(history))
+
+    df = pd.DataFrame(history)
+    # Coinalyze OI OHLC: t=timestamp(sec), o=open, h=high, l=low, c=close
+    df["timestamp"] = pd.to_datetime(df["t"], unit="s", utc=True)
+    df["symbol"] = symbol
+    df["sum_open_interest"] = df["c"].astype(float)  # use close OI
+    df["sum_open_interest_value"] = 0.0  # not available from Coinalyze
     df = df.drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
 
     logger.info("Downloaded %d open interest records for %s", len(df), symbol)
     return df[["timestamp", "symbol", "sum_open_interest", "sum_open_interest_value"]]
 
 
-_MAX_LS_RATIO_PER_REQUEST = 500
-
-
 def download_ls_ratio(
     symbol: str = DEFAULT_SYMBOL,
     start_date: datetime | str | None = None,
     end_date: datetime | str | None = None,
-    period: str = "5m",
+    interval: str = "daily",
     *,
+    api_key: str | None = None,
     session: requests.Session | None = None,
     progress_callback: callable | None = None,
 ) -> pd.DataFrame:
-    """Fetch global long/short account ratio from the Binance Futures API.
+    """Fetch global long/short account ratio from the Coinalyze API.
+
+    Uses daily resolution by default (all-time history available).
+
+    Parameters
+    ----------
+    symbol:
+        Binance-style trading pair, e.g. ``"BTCUSDT"``.
+    interval:
+        ``"daily"``, ``"4hour"``, ``"1hour"``, etc.
+    api_key:
+        Coinalyze API key. Falls back to ``COINALYZE_API_KEY`` env var.
 
     Returns
     -------
     pd.DataFrame
         Columns: ``timestamp, symbol, long_short_ratio, long_account, short_account``.
     """
-    if isinstance(start_date, str):
-        start_date = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
-    if isinstance(end_date, str):
-        end_date = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
+    import os
 
-    if start_date is None:
-        start_date = datetime(2020, 1, 1, tzinfo=timezone.utc)
-    if end_date is None:
-        end_date = datetime.now(tz=timezone.utc)
-
-    if start_date.tzinfo is None:
-        start_date = start_date.replace(tzinfo=timezone.utc)
-    if end_date.tzinfo is None:
-        end_date = end_date.replace(tzinfo=timezone.utc)
-
-    sess = session or requests.Session()
-    url = f"{BINANCE_BASE_URL}/futures/data/globalLongShortAccountRatio"
-
-    all_rows: list[dict] = []
-    current_start_ms = _ts_ms(start_date)
-    end_ms = _ts_ms(end_date)
-    last_request_time = 0.0
-
-    while current_start_ms < end_ms:
-        elapsed = time.monotonic() - last_request_time
-        if elapsed < _MIN_REQUEST_INTERVAL_S:
-            time.sleep(_MIN_REQUEST_INTERVAL_S - elapsed)
-
-        params = {
-            "symbol": symbol,
-            "period": period,
-            "startTime": current_start_ms,
-            "endTime": end_ms,
-            "limit": _MAX_LS_RATIO_PER_REQUEST,
-        }
-
-        last_request_time = time.monotonic()
-        resp = sess.get(url, params=params, timeout=30)
-        if resp.status_code == 400:
-            logger.warning(
-                "[%s] L/S ratio endpoint returned 400 at startTime=%d — no data available",
-                symbol,
-                current_start_ms,
-            )
-            break
-        resp.raise_for_status()
-        data = resp.json()
-
-        if not data:
-            break
-
-        all_rows.extend(data)
-
-        if progress_callback is not None:
-            progress_callback(len(data))
-
-        last_time = int(data[-1]["timestamp"])
-        current_start_ms = last_time + 1
-
-        if len(data) < _MAX_LS_RATIO_PER_REQUEST:
-            break
-
-    if not all_rows:
+    key = api_key or os.environ.get("COINALYZE_API_KEY", "")
+    if not key:
+        logger.warning("No Coinalyze API key — returning empty L/S DataFrame")
         return pd.DataFrame(
             columns=["timestamp", "symbol", "long_short_ratio", "long_account", "short_account"]
         )
 
-    df = pd.DataFrame(all_rows)
-    df = df.rename(
-        columns={
-            "longShortRatio": "long_short_ratio",
-            "longAccount": "long_account",
-            "shortAccount": "short_account",
-        }
-    )
-    df["long_short_ratio"] = pd.to_numeric(df["long_short_ratio"], errors="coerce")
-    df["long_account"] = pd.to_numeric(df["long_account"], errors="coerce")
-    df["short_account"] = pd.to_numeric(df["short_account"], errors="coerce")
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    start_date, end_date = _coinalyze_date_params(start_date, end_date)
+    ca_symbol = _binance_to_coinalyze_symbol(symbol)
+    sess = session or requests.Session()
 
+    resp = sess.get(
+        f"{COINALYZE_BASE_URL}/long-short-ratio-history",
+        params={
+            "api_key": key,
+            "symbols": ca_symbol,
+            "interval": interval,
+            "from": int(start_date.timestamp()),
+            "to": int(end_date.timestamp()),
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    if not data or not data[0].get("history"):
+        return pd.DataFrame(
+            columns=["timestamp", "symbol", "long_short_ratio", "long_account", "short_account"]
+        )
+
+    history = data[0]["history"]
+    if progress_callback is not None:
+        progress_callback(len(history))
+
+    df = pd.DataFrame(history)
+    # Coinalyze L/S: t=timestamp(sec), r=ratio, l=longs%, s=shorts%
+    df["timestamp"] = pd.to_datetime(df["t"], unit="s", utc=True)
+    df["symbol"] = symbol
+    df["long_short_ratio"] = df["r"].astype(float)
+    df["long_account"] = df["l"].astype(float)
+    df["short_account"] = df["s"].astype(float)
     df = df.drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
 
     logger.info("Downloaded %d long/short ratio records for %s", len(df), symbol)

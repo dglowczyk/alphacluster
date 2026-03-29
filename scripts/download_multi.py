@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -91,6 +92,7 @@ def download_symbol(
     oi: bool = False,
     ls_ratio: bool = False,
     skip_klines: bool = False,
+    api_key: str = "",
 ) -> None:
     symbol_lower = symbol.lower()
 
@@ -176,6 +178,7 @@ def download_symbol(
             symbol=symbol,
             start_date=oi_start,
             end_date=end_date,
+            api_key=api_key,
             progress_callback=lambda n: progress_oi.update(n),
         )
         progress_oi.close()
@@ -198,6 +201,7 @@ def download_symbol(
             symbol=symbol,
             start_date=ls_start,
             end_date=end_date,
+            api_key=api_key,
             progress_callback=lambda n: progress_ls.update(n),
         )
         progress_ls.close()
@@ -218,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     output_dir = Path(args.output_dir) if args.output_dir else DATA_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
+    coinalyze_key = os.environ.get("COINALYZE_API_KEY", "")
 
     total = len(args.symbols)
     failed = []
@@ -236,6 +241,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.oi,
                 args.ls_ratio,
                 args.no_klines,
+                api_key=coinalyze_key,
             )
         except Exception as e:
             logger.error("[%s] FAILED: %s", symbol, e)

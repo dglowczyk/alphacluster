@@ -58,13 +58,8 @@ def _make_kline_batch(start_ms: int, n: int, close_price: float = 10000.0) -> li
     return [_make_kline_row(start_ms + i * _FIVE_MIN_MS, close_price) for i in range(n)]
 
 
-def _make_oi_row(timestamp_ms: int) -> dict:
-    return {
-        "symbol": "BTCUSDT",
-        "sumOpenInterest": "50000.00",
-        "sumOpenInterestValue": "2500000000.00",
-        "timestamp": timestamp_ms,
-    }
+def _make_oi_row(timestamp_s: int) -> dict:
+    return {"t": timestamp_s, "o": 49000.0, "h": 51000.0, "l": 48000.0, "c": 50000.0}
 
 
 def _make_funding_row(funding_time_ms: int) -> dict:
@@ -255,24 +250,25 @@ class TestDownloadFundingRates:
 
 
 class TestDownloadOpenInterest:
-    """Tests for download_open_interest with mocked HTTP responses."""
+    """Tests for download_open_interest with mocked Coinalyze responses."""
 
     def test_fetch_open_interest(self):
         start = datetime(2023, 1, 1, tzinfo=timezone.utc)
-        start_ms = int(start.timestamp() * 1000)
-        five_min_ms = 5 * 60 * 1000
-        rows = [_make_oi_row(start_ms + i * five_min_ms) for i in range(5)]
+        start_s = int(start.timestamp())
+        day_s = 86400
+        rows = [_make_oi_row(start_s + i * day_s) for i in range(5)]
 
         session = MagicMock()
         resp = MagicMock()
-        resp.json.return_value = rows
+        resp.json.return_value = [{"symbol": "BTCUSDT_PERP.A", "history": rows}]
         resp.raise_for_status = MagicMock()
         session.get.return_value = resp
 
         df = download_open_interest(
             symbol="BTCUSDT",
             start_date=start,
-            end_date=datetime(2023, 1, 2, tzinfo=timezone.utc),
+            end_date=datetime(2023, 1, 6, tzinfo=timezone.utc),
+            api_key="test-key",
             session=session,
         )
         assert len(df) == 5
@@ -284,7 +280,7 @@ class TestDownloadOpenInterest:
     def test_empty_open_interest(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.json.return_value = []
+        resp.json.return_value = [{"symbol": "BTCUSDT_PERP.A", "history": []}]
         resp.raise_for_status = MagicMock()
         session.get.return_value = resp
 
@@ -292,40 +288,45 @@ class TestDownloadOpenInterest:
             symbol="BTCUSDT",
             start_date=datetime(2099, 1, 1, tzinfo=timezone.utc),
             end_date=datetime(2099, 1, 2, tzinfo=timezone.utc),
+            api_key="test-key",
             session=session,
         )
         assert df.empty
 
+    def test_no_api_key_returns_empty(self):
+        df = download_open_interest(
+            symbol="BTCUSDT",
+            start_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            end_date=datetime(2023, 1, 2, tzinfo=timezone.utc),
+            api_key="",
+        )
+        assert df.empty
 
-def _make_ls_ratio_row(timestamp_ms: int) -> dict:
-    return {
-        "symbol": "BTCUSDT",
-        "longShortRatio": "1.5",
-        "longAccount": "0.6",
-        "shortAccount": "0.4",
-        "timestamp": timestamp_ms,
-    }
+
+def _make_ls_ratio_row(timestamp_s: int) -> dict:
+    return {"t": timestamp_s, "r": 1.5, "l": 60.0, "s": 40.0}
 
 
 class TestDownloadLsRatio:
-    """Tests for download_ls_ratio with mocked HTTP responses."""
+    """Tests for download_ls_ratio with mocked Coinalyze responses."""
 
     def test_fetch_ls_ratio(self):
         start = datetime(2023, 1, 1, tzinfo=timezone.utc)
-        start_ms = int(start.timestamp() * 1000)
-        five_min_ms = 5 * 60 * 1000
-        rows = [_make_ls_ratio_row(start_ms + i * five_min_ms) for i in range(5)]
+        start_s = int(start.timestamp())
+        day_s = 86400
+        rows = [_make_ls_ratio_row(start_s + i * day_s) for i in range(5)]
 
         session = MagicMock()
         resp = MagicMock()
-        resp.json.return_value = rows
+        resp.json.return_value = [{"symbol": "BTCUSDT_PERP.A", "history": rows}]
         resp.raise_for_status = MagicMock()
         session.get.return_value = resp
 
         df = download_ls_ratio(
             symbol="BTCUSDT",
             start_date=start,
-            end_date=datetime(2023, 1, 2, tzinfo=timezone.utc),
+            end_date=datetime(2023, 1, 6, tzinfo=timezone.utc),
+            api_key="test-key",
             session=session,
         )
         assert len(df) == 5
@@ -338,7 +339,7 @@ class TestDownloadLsRatio:
     def test_empty_ls_ratio(self):
         session = MagicMock()
         resp = MagicMock()
-        resp.json.return_value = []
+        resp.json.return_value = [{"symbol": "BTCUSDT_PERP.A", "history": []}]
         resp.raise_for_status = MagicMock()
         session.get.return_value = resp
 
@@ -346,7 +347,17 @@ class TestDownloadLsRatio:
             symbol="BTCUSDT",
             start_date=datetime(2099, 1, 1, tzinfo=timezone.utc),
             end_date=datetime(2099, 1, 2, tzinfo=timezone.utc),
+            api_key="test-key",
             session=session,
+        )
+        assert df.empty
+
+    def test_no_api_key_returns_empty(self):
+        df = download_ls_ratio(
+            symbol="BTCUSDT",
+            start_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            end_date=datetime(2023, 1, 2, tzinfo=timezone.utc),
+            api_key="",
         )
         assert df.empty
 

@@ -359,6 +359,13 @@ def download_open_interest(
 
         last_request_time = time.monotonic()
         resp = sess.get(url, params=params, timeout=30)
+        if resp.status_code == 400:
+            logger.warning(
+                "[%s] OI endpoint returned 400 at startTime=%d — no data available",
+                symbol,
+                current_start_ms,
+            )
+            break
         resp.raise_for_status()
         data = resp.json()
 
@@ -455,6 +462,13 @@ def download_ls_ratio(
 
         last_request_time = time.monotonic()
         resp = sess.get(url, params=params, timeout=30)
+        if resp.status_code == 400:
+            logger.warning(
+                "[%s] L/S ratio endpoint returned 400 at startTime=%d — no data available",
+                symbol,
+                current_start_ms,
+            )
+            break
         resp.raise_for_status()
         data = resp.json()
 

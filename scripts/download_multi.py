@@ -69,6 +69,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--end", type=str, default=None, help="End date (default: now)")
     parser.add_argument("--funding", action="store_true", help="Also download funding rates")
+    parser.add_argument("--no-klines", action="store_true", help="Skip OHLCV klines download")
     parser.add_argument(
         "--oi", action="store_true", default=True, help="Download open interest data"
     )
@@ -89,54 +90,57 @@ def download_symbol(
     funding: bool = False,
     oi: bool = False,
     ls_ratio: bool = False,
+    skip_klines: bool = False,
 ) -> None:
     symbol_lower = symbol.lower()
-    klines_path = output_dir / f"{symbol_lower}_5m.parquet"
 
-    # Incremental: resume from last timestamp
-    last_ts = get_last_timestamp(klines_path, time_col="open_time")
-    actual_start = start_date
-    if last_ts is not None:
-        actual_start = last_ts.to_pydatetime().replace(tzinfo=timezone.utc)
-        logger.info("[%s] Resuming from %s", symbol, last_ts)
+    if not skip_klines:
+        klines_path = output_dir / f"{symbol_lower}_5m.parquet"
 
-    logger.info("[%s] Downloading klines %s → %s", symbol, actual_start.date(), end_date.date())
+        # Incremental: resume from last timestamp
+        last_ts = get_last_timestamp(klines_path, time_col="open_time")
+        actual_start = start_date
+        if last_ts is not None:
+            actual_start = last_ts.to_pydatetime().replace(tzinfo=timezone.utc)
+            logger.info("[%s] Resuming from %s", symbol, last_ts)
 
-    progress = tqdm(desc=f"{symbol} klines", unit=" candles", leave=False)
-    df_klines = download_klines(
-        symbol=symbol,
-        interval="5m",
-        start_date=actual_start,
-        end_date=end_date,
-        progress_callback=lambda n: progress.update(n),
-    )
-    progress.close()
+        logger.info("[%s] Downloading klines %s → %s", symbol, actual_start.date(), end_date.date())
 
-    if df_klines.empty:
-        logger.info("[%s] No new klines", symbol)
-    else:
-        n_new = append_to_parquet(df_klines, klines_path, time_col="open_time")
-        logger.info("[%s] +%d klines (file: %s)", symbol, n_new, klines_path)
-
-        from alphacluster.data.storage import load_from_parquet
-
-        all_klines = load_from_parquet(klines_path)
-        report = validate_klines(all_klines)
-
-        if report["n_gaps"] > 0:
-            all_klines = fill_gaps(all_klines)
-            from alphacluster.data.storage import save_to_parquet
-
-            save_to_parquet(all_klines, klines_path)
-
-        outliers = detect_outliers(all_klines)
-        logger.info(
-            "[%s] %d rows, %d gaps, %d outliers",
-            symbol,
-            report["n_rows"],
-            report["n_gaps"],
-            len(outliers),
+        progress = tqdm(desc=f"{symbol} klines", unit=" candles", leave=False)
+        df_klines = download_klines(
+            symbol=symbol,
+            interval="5m",
+            start_date=actual_start,
+            end_date=end_date,
+            progress_callback=lambda n: progress.update(n),
         )
+        progress.close()
+
+        if df_klines.empty:
+            logger.info("[%s] No new klines", symbol)
+        else:
+            n_new = append_to_parquet(df_klines, klines_path, time_col="open_time")
+            logger.info("[%s] +%d klines (file: %s)", symbol, n_new, klines_path)
+
+            from alphacluster.data.storage import load_from_parquet
+
+            all_klines = load_from_parquet(klines_path)
+            report = validate_klines(all_klines)
+
+            if report["n_gaps"] > 0:
+                all_klines = fill_gaps(all_klines)
+                from alphacluster.data.storage import save_to_parquet
+
+                save_to_parquet(all_klines, klines_path)
+
+            outliers = detect_outliers(all_klines)
+            logger.info(
+                "[%s] %d rows, %d gaps, %d outliers",
+                symbol,
+                report["n_rows"],
+                report["n_gaps"],
+                len(outliers),
+            )
 
     if funding:
         funding_path = output_dir / f"{symbol_lower}_funding.parquet"
@@ -231,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.funding,
                 args.oi,
                 args.ls_ratio,
+                args.no_klines,
             )
         except Exception as e:
             logger.error("[%s] FAILED: %s", symbol, e)

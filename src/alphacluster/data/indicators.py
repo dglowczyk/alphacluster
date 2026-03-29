@@ -249,6 +249,32 @@ def _obv_slope(close: pd.Series, volume: pd.Series, period: int) -> pd.Series:
     return slope / vol_mean
 
 
+def _detect_swings(
+    high: np.ndarray, low: np.ndarray, period: int = 5
+) -> tuple[list[int], list[int]]:
+    """Detect swing highs and lows using rolling window comparison.
+
+    A swing high at index i requires high[i] to be the maximum of
+    high[i-period:i+period+1]. Swing lows are analogous with low.
+
+    Returns lists of indices where swings occur.
+    """
+    n = len(high)
+    swing_highs: list[int] = []
+    swing_lows: list[int] = []
+
+    for i in range(period, n - period):
+        window_high = high[i - period : i + period + 1]
+        if high[i] == window_high.max() and high[i] > high[i - 1] and high[i] > high[i + 1]:
+            swing_highs.append(i)
+
+        window_low = low[i - period : i + period + 1]
+        if low[i] == window_low.min() and low[i] < low[i - 1] and low[i] < low[i + 1]:
+            swing_lows.append(i)
+
+    return swing_highs, swing_lows
+
+
 def _vwap_distance(
     close: pd.Series,
     high: pd.Series,

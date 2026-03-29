@@ -226,3 +226,55 @@ class TestSentimentFeatures:
         vals = result["oi_change"].values
         assert vals.min() >= -1.0 - 0.001
         assert vals.max() <= 1.0 + 0.001
+
+
+class TestSwingDetection:
+    """Tests for swing high/low detection."""
+
+    def test_known_swing_high(self):
+        """A clear peak should be detected as swing high."""
+        prices = list(range(100, 110)) + list(range(110, 100, -1))
+        n = len(prices)
+        df = pd.DataFrame({
+            "open_time": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
+            "open": prices,
+            "high": [p + 1 for p in prices],
+            "low": [p - 1 for p in prices],
+            "close": prices,
+            "volume": [1000.0] * n,
+        })
+        from alphacluster.data.indicators import _detect_swings
+        swing_highs, swing_lows = _detect_swings(
+            df["high"].values, df["low"].values, period=3
+        )
+        assert len(swing_highs) >= 1
+        assert any(8 <= idx <= 11 for idx in swing_highs)
+
+    def test_known_swing_low(self):
+        """A clear trough should be detected as swing low."""
+        prices = list(range(110, 100, -1)) + list(range(100, 110))
+        n = len(prices)
+        df = pd.DataFrame({
+            "open_time": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
+            "open": prices,
+            "high": [p + 1 for p in prices],
+            "low": [p - 1 for p in prices],
+            "close": prices,
+            "volume": [1000.0] * n,
+        })
+        from alphacluster.data.indicators import _detect_swings
+        swing_highs, swing_lows = _detect_swings(
+            df["high"].values, df["low"].values, period=3
+        )
+        assert len(swing_lows) >= 1
+        assert any(8 <= idx <= 11 for idx in swing_lows)
+
+    def test_constant_price_no_swings(self):
+        """Constant price should produce no swings."""
+        n = 50
+        high = np.full(n, 100.0)
+        low = np.full(n, 100.0)
+        from alphacluster.data.indicators import _detect_swings
+        swing_highs, swing_lows = _detect_swings(high, low, period=5)
+        assert len(swing_highs) == 0
+        assert len(swing_lows) == 0

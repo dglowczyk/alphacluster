@@ -125,8 +125,8 @@ class TestComputeIndicators:
             assert not result[col].isna().any()
 
     def test_indicator_count(self):
-        """Should have exactly 14 indicator columns."""
-        assert len(INDICATOR_COLUMNS) == 14
+        """Should have exactly 20 indicator columns."""
+        assert len(INDICATOR_COLUMNS) == 20
 
     def test_ema_trend_present_and_finite(self):
         df = _make_ohlcv(n=200)
@@ -278,3 +278,67 @@ class TestSwingDetection:
         swing_highs, swing_lows = _detect_swings(high, low, period=5)
         assert len(swing_highs) == 0
         assert len(swing_lows) == 0
+
+
+class TestSMCFeatures:
+    """Tests for SMC lite features in compute_indicators()."""
+
+    def test_smc_columns_present(self):
+        df = _make_ohlcv(n=500)
+        result = compute_indicators(df)
+        for col in ["swing_high_dist", "swing_low_dist", "fvg_bull", "fvg_bear",
+                     "bos_signal", "sweep_signal"]:
+            assert col in result.columns, f"Missing SMC column: {col}"
+
+    def test_smc_no_nans(self):
+        df = _make_ohlcv(n=500)
+        result = compute_indicators(df)
+        for col in ["swing_high_dist", "swing_low_dist", "fvg_bull", "fvg_bear",
+                     "bos_signal", "sweep_signal"]:
+            assert not result[col].isna().any(), f"NaN in {col}"
+            assert np.all(np.isfinite(result[col].values)), f"Inf in {col}"
+
+    def test_swing_dist_clipped(self):
+        df = _make_ohlcv(n=500)
+        result = compute_indicators(df)
+        for col in ["swing_high_dist", "swing_low_dist"]:
+            vals = result[col].values
+            assert vals.min() >= -0.1 - 0.001
+            assert vals.max() <= 0.1 + 0.001
+
+    def test_bos_signal_range(self):
+        df = _make_ohlcv(n=500)
+        result = compute_indicators(df)
+        vals = result["bos_signal"].values
+        assert vals.min() >= -1.0 - 0.001
+        assert vals.max() <= 1.0 + 0.001
+
+    def test_sweep_signal_range(self):
+        df = _make_ohlcv(n=500)
+        result = compute_indicators(df)
+        vals = result["sweep_signal"].values
+        assert vals.min() >= -1.0 - 0.001
+        assert vals.max() <= 1.0 + 0.001
+
+    def test_small_dataframe_smc(self):
+        """SMC features should work with small data (all zeros)."""
+        df = _make_ohlcv(n=15)
+        result = compute_indicators(df)
+        for col in ["swing_high_dist", "swing_low_dist", "fvg_bull", "fvg_bear",
+                     "bos_signal", "sweep_signal"]:
+            assert not result[col].isna().any()
+
+    def test_constant_price_smc(self):
+        """Constant price should produce zero SMC signals."""
+        n = 200
+        df = pd.DataFrame({
+            "open_time": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
+            "open": np.full(n, 50000.0),
+            "high": np.full(n, 50000.0),
+            "low": np.full(n, 50000.0),
+            "close": np.full(n, 50000.0),
+            "volume": np.full(n, 1000.0),
+        })
+        result = compute_indicators(df)
+        assert (result["bos_signal"] == 0.0).all()
+        assert (result["sweep_signal"] == 0.0).all()

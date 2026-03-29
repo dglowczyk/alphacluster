@@ -18,7 +18,7 @@ def compute_indicators(
 ) -> pd.DataFrame:
     """Compute technical indicators and append them as columns to *df*.
 
-    Adds 14 indicator columns to the DataFrame.  NaN values from warmup
+    Adds 20 indicator columns to the DataFrame.  NaN values from warmup
     periods are forward/back-filled so every row has valid data.
 
     Parameters
@@ -145,6 +145,14 @@ def compute_indicators(
     else:
         df["ls_ratio"] = 0.0
 
+    # ── SMC Lite indicators ──────────────────────────────────────────
+    smc = _smc_indicators(
+        high.to_numpy(), low.to_numpy(), close.to_numpy(),
+        swing_period=5, decay=10,
+    )
+    for col_name, values in smc.items():
+        df[col_name] = values
+
     # ── Fill NaNs from warmup periods ─────────────────────────────────
     indicator_cols = [
         "return_1",
@@ -161,6 +169,12 @@ def compute_indicators(
         "funding_rate",
         "oi_change",
         "ls_ratio",
+        "swing_high_dist",
+        "swing_low_dist",
+        "fvg_bull",
+        "fvg_bear",
+        "bos_signal",
+        "sweep_signal",
     ]
     df[indicator_cols] = df[indicator_cols].ffill().bfill().fillna(0.0)
 
@@ -168,22 +182,33 @@ def compute_indicators(
 
 
 INDICATOR_COLUMNS: list[str] = [
-    "return_1",
-    "return_20",
+    # Price Action (4)
     "rsi_14",
-    "macd_hist",
     "bb_pctb",
-    "atr_14",
-    "volume_ratio_20",
-    "obv_slope",
     "vwap_dist",
     "ema_trend",
+    # Momentum (4)
+    "return_1",
+    "return_20",
+    "macd_hist",
+    "atr_14",
+    # Volume / Microstructure (3)
+    "volume_ratio_20",
+    "obv_slope",
     "cvd_slope",
+    # Sentiment (3)
     "funding_rate",
     "oi_change",
     "ls_ratio",
+    # SMC Lite (6)
+    "swing_high_dist",
+    "swing_low_dist",
+    "fvg_bull",
+    "fvg_bear",
+    "bos_signal",
+    "sweep_signal",
 ]
-"""Names of the 14 indicator columns added by :func:`compute_indicators`."""
+"""Names of the 20 indicator columns added by :func:`compute_indicators`."""
 
 
 # ── Private helpers ───────────────────────────────────────────────────────
@@ -273,6 +298,127 @@ def _detect_swings(
             swing_lows.append(i)
 
     return swing_highs, swing_lows
+
+
+def _smc_indicators(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    swing_period: int = 5,
+    decay: int = 10,
+) -> dict[str, np.ndarray]:
+    """Compute SMC lite indicators: swing distances, FVG, BOS, sweeps.
+
+    Returns dict with 6 arrays, one per SMC feature.
+    """
+    n = len(close)
+    swing_high_dist = np.zeros(n)
+    swing_low_dist = np.zeros(n)
+    fvg_bull = np.zeros(n)
+    fvg_bear = np.zeros(n)
+    bos_signal = np.zeros(n)
+    sweep_signal = np.zeros(n)
+
+    # Detect swings
+    swing_highs, swing_lows = _detect_swings(high, low, period=swing_period)
+
+    # ── Swing distances ──────────────────────────────────────────
+    last_sh_val = None
+    sh_idx = 0
+    last_sl_val = None
+    sl_idx = 0
+
+    for i in range(n):
+        while sh_idx < len(swing_highs) and swing_highs[sh_idx] <= i:
+            last_sh_val = high[swing_highs[sh_idx]]
+            sh_idx += 1
+        while sl_idx < len(swing_lows) and swing_lows[sl_idx] <= i:
+            last_sl_val = low[swing_lows[sl_idx]]
+            sl_idx += 1
+
+        c = close[i] if close[i] != 0 else 1.0
+        if last_sh_val is not None:
+            swing_high_dist[i] = np.clip((last_sh_val - close[i]) / c, -0.1, 0.1)
+        if last_sl_val is not None:
+            swing_low_dist[i] = np.clip((close[i] - last_sl_val) / c, -0.1, 0.1)
+
+    # ── FVG detection ────────────────────────────────────────────
+    last_bull_fvg_low = None
+    last_bear_fvg_high = None
+
+    for i in range(2, n):
+        # Bullish FVG: low[i] > high[i-2]
+        if low[i] > high[i - 2]:
+            last_bull_fvg_low = high[i - 2]
+
+        # Bearish FVG: high[i] < low[i-2]
+        if high[i] < low[i - 2]:
+            last_bear_fvg_high = low[i - 2]
+
+        # Check if FVGs are filled
+        if last_bull_fvg_low is not None and low[i] <= last_bull_fvg_low:
+            last_bull_fvg_low = None
+        if last_bear_fvg_high is not None and high[i] >= last_bear_fvg_high:
+            last_bear_fvg_high = None
+
+        c = close[i] if close[i] != 0 else 1.0
+        if last_bull_fvg_low is not None:
+            fvg_bull[i] = np.clip((last_bull_fvg_low - close[i]) / c, -0.1, 0.1)
+        if last_bear_fvg_high is not None:
+            fvg_bear[i] = np.clip((last_bear_fvg_high - close[i]) / c, -0.1, 0.1)
+
+    # ── BOS + Sweep detection ────────────────────────────────────
+    last_sh = None
+    last_sl = None
+    sh_ptr = 0
+    sl_ptr = 0
+    bos_raw = np.zeros(n)
+    sweep_raw = np.zeros(n)
+
+    for i in range(n):
+        while sh_ptr < len(swing_highs) and swing_highs[sh_ptr] <= i:
+            last_sh = high[swing_highs[sh_ptr]]
+            sh_ptr += 1
+        while sl_ptr < len(swing_lows) and swing_lows[sl_ptr] <= i:
+            last_sl = low[swing_lows[sl_ptr]]
+            sl_ptr += 1
+
+        if last_sh is not None:
+            if close[i] > last_sh:
+                bos_raw[i] = 1.0
+                last_sh = close[i]
+            if high[i] > last_sh and close[i] <= last_sh:
+                sweep_raw[i] = -1.0
+
+        if last_sl is not None:
+            if close[i] < last_sl:
+                bos_raw[i] = -1.0
+                last_sl = close[i]
+            if low[i] < last_sl and close[i] >= last_sl:
+                sweep_raw[i] = 1.0
+
+    # Apply linear decay to BOS and sweep signals
+    for signal_raw, signal_out in [(bos_raw, bos_signal), (sweep_raw, sweep_signal)]:
+        remaining_decay = 0.0
+        decay_dir = 0.0
+        for i in range(n):
+            if signal_raw[i] != 0:
+                remaining_decay = decay
+                decay_dir = signal_raw[i]
+            if remaining_decay > 0:
+                signal_out[i] = decay_dir * (remaining_decay / decay)
+                remaining_decay -= 1
+            else:
+                signal_out[i] = 0.0
+
+    return {
+        "swing_high_dist": swing_high_dist,
+        "swing_low_dist": swing_low_dist,
+        "fvg_bull": fvg_bull,
+        "fvg_bear": fvg_bear,
+        "bos_signal": bos_signal,
+        "sweep_signal": sweep_signal,
+    }
 
 
 def _vwap_distance(

@@ -147,8 +147,11 @@ def compute_indicators(
 
     # ── SMC Lite indicators ──────────────────────────────────────────
     smc = _smc_indicators(
-        high.to_numpy(), low.to_numpy(), close.to_numpy(),
-        swing_period=5, decay=10,
+        high.to_numpy(),
+        low.to_numpy(),
+        close.to_numpy(),
+        swing_period=5,
+        decay=10,
     )
     for col_name, values in smc.items():
         df[col_name] = values

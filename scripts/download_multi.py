@@ -18,7 +18,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from alphacluster.config import DATA_DIR
-from alphacluster.data.downloader import download_funding_rates, download_klines, download_open_interest, download_ls_ratio
+from alphacluster.data.downloader import download_funding_rates, download_klines
 from alphacluster.data.storage import append_to_parquet, get_last_timestamp
 from alphacluster.data.validator import detect_outliers, fill_gaps, validate_klines
 
@@ -68,9 +68,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Start date (default: 2020-01-01)",
     )
     parser.add_argument("--end", type=str, default=None, help="End date (default: now)")
-    parser.add_argument(
-        "--funding", action="store_true", help="Also download funding rates"
-    )
+    parser.add_argument("--funding", action="store_true", help="Also download funding rates")
     parser.add_argument(
         "--oi", action="store_true", default=True, help="Download open interest data"
     )
@@ -134,7 +132,10 @@ def download_symbol(
         outliers = detect_outliers(all_klines)
         logger.info(
             "[%s] %d rows, %d gaps, %d outliers",
-            symbol, report["n_rows"], report["n_gaps"], len(outliers),
+            symbol,
+            report["n_rows"],
+            report["n_gaps"],
+            len(outliers),
         )
 
     if funding:
@@ -218,23 +219,31 @@ def main(argv: list[str] | None = None) -> int:
     failed = []
 
     for i, symbol in enumerate(args.symbols, 1):
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  [{i}/{total}] {symbol}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         try:
-            download_symbol(symbol, start_date, end_date, output_dir, args.funding, args.oi, args.ls_ratio)
+            download_symbol(
+                symbol,
+                start_date,
+                end_date,
+                output_dir,
+                args.funding,
+                args.oi,
+                args.ls_ratio,
+            )
         except Exception as e:
             logger.error("[%s] FAILED: %s", symbol, e)
             failed.append((symbol, str(e)))
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  DONE: {total - len(failed)}/{total} symbols downloaded")
     if failed:
         print(f"  FAILED: {', '.join(s for s, _ in failed)}")
         for sym, err in failed:
             print(f"    {sym}: {err}")
     print(f"  Output: {output_dir}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     return 1 if failed else 0
 

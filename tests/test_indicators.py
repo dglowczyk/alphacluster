@@ -166,28 +166,34 @@ class TestComputeIndicators:
 def _make_funding_df(n: int = 200) -> pd.DataFrame:
     """Create synthetic funding rate data at 8h intervals."""
     n_funding = max(1, n // 96)
-    return pd.DataFrame({
-        "funding_time": pd.date_range("2025-01-01", periods=n_funding, freq="8h", tz="UTC"),
-        "funding_rate": np.random.default_rng(42).normal(0.0001, 0.0005, n_funding),
-    })
+    return pd.DataFrame(
+        {
+            "funding_time": pd.date_range("2025-01-01", periods=n_funding, freq="8h", tz="UTC"),
+            "funding_rate": np.random.default_rng(42).normal(0.0001, 0.0005, n_funding),
+        }
+    )
 
 
 def _make_oi_df(n: int = 200) -> pd.DataFrame:
     """Create synthetic open interest data at 5m intervals."""
     base_oi = 50000.0 + np.cumsum(np.random.default_rng(42).normal(0, 100, n))
-    return pd.DataFrame({
-        "timestamp": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
-        "sum_open_interest": np.maximum(base_oi, 1000.0),
-    })
+    return pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
+            "sum_open_interest": np.maximum(base_oi, 1000.0),
+        }
+    )
 
 
 def _make_ls_ratio_df(n: int = 200) -> pd.DataFrame:
     """Create synthetic long/short ratio data at 5m intervals."""
     ratios = 1.0 + np.random.default_rng(42).normal(0, 0.3, n)
-    return pd.DataFrame({
-        "timestamp": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
-        "long_short_ratio": np.maximum(ratios, 0.1),
-    })
+    return pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
+            "long_short_ratio": np.maximum(ratios, 0.1),
+        }
+    )
 
 
 class TestSentimentFeatures:
@@ -235,18 +241,19 @@ class TestSwingDetection:
         """A clear peak should be detected as swing high."""
         prices = list(range(100, 110)) + list(range(110, 100, -1))
         n = len(prices)
-        df = pd.DataFrame({
-            "open_time": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
-            "open": prices,
-            "high": [p + 1 for p in prices],
-            "low": [p - 1 for p in prices],
-            "close": prices,
-            "volume": [1000.0] * n,
-        })
-        from alphacluster.data.indicators import _detect_swings
-        swing_highs, swing_lows = _detect_swings(
-            df["high"].values, df["low"].values, period=3
+        df = pd.DataFrame(
+            {
+                "open_time": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
+                "open": prices,
+                "high": [p + 1 for p in prices],
+                "low": [p - 1 for p in prices],
+                "close": prices,
+                "volume": [1000.0] * n,
+            }
         )
+        from alphacluster.data.indicators import _detect_swings
+
+        swing_highs, swing_lows = _detect_swings(df["high"].values, df["low"].values, period=3)
         assert len(swing_highs) >= 1
         assert any(8 <= idx <= 11 for idx in swing_highs)
 
@@ -254,18 +261,19 @@ class TestSwingDetection:
         """A clear trough should be detected as swing low."""
         prices = list(range(110, 100, -1)) + list(range(100, 110))
         n = len(prices)
-        df = pd.DataFrame({
-            "open_time": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
-            "open": prices,
-            "high": [p + 1 for p in prices],
-            "low": [p - 1 for p in prices],
-            "close": prices,
-            "volume": [1000.0] * n,
-        })
-        from alphacluster.data.indicators import _detect_swings
-        swing_highs, swing_lows = _detect_swings(
-            df["high"].values, df["low"].values, period=3
+        df = pd.DataFrame(
+            {
+                "open_time": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
+                "open": prices,
+                "high": [p + 1 for p in prices],
+                "low": [p - 1 for p in prices],
+                "close": prices,
+                "volume": [1000.0] * n,
+            }
         )
+        from alphacluster.data.indicators import _detect_swings
+
+        swing_highs, swing_lows = _detect_swings(df["high"].values, df["low"].values, period=3)
         assert len(swing_lows) >= 1
         assert any(8 <= idx <= 11 for idx in swing_lows)
 
@@ -275,6 +283,7 @@ class TestSwingDetection:
         high = np.full(n, 100.0)
         low = np.full(n, 100.0)
         from alphacluster.data.indicators import _detect_swings
+
         swing_highs, swing_lows = _detect_swings(high, low, period=5)
         assert len(swing_highs) == 0
         assert len(swing_lows) == 0
@@ -286,15 +295,27 @@ class TestSMCFeatures:
     def test_smc_columns_present(self):
         df = _make_ohlcv(n=500)
         result = compute_indicators(df)
-        for col in ["swing_high_dist", "swing_low_dist", "fvg_bull", "fvg_bear",
-                     "bos_signal", "sweep_signal"]:
+        for col in [
+            "swing_high_dist",
+            "swing_low_dist",
+            "fvg_bull",
+            "fvg_bear",
+            "bos_signal",
+            "sweep_signal",
+        ]:
             assert col in result.columns, f"Missing SMC column: {col}"
 
     def test_smc_no_nans(self):
         df = _make_ohlcv(n=500)
         result = compute_indicators(df)
-        for col in ["swing_high_dist", "swing_low_dist", "fvg_bull", "fvg_bear",
-                     "bos_signal", "sweep_signal"]:
+        for col in [
+            "swing_high_dist",
+            "swing_low_dist",
+            "fvg_bull",
+            "fvg_bear",
+            "bos_signal",
+            "sweep_signal",
+        ]:
             assert not result[col].isna().any(), f"NaN in {col}"
             assert np.all(np.isfinite(result[col].values)), f"Inf in {col}"
 
@@ -324,21 +345,29 @@ class TestSMCFeatures:
         """SMC features should work with small data (all zeros)."""
         df = _make_ohlcv(n=15)
         result = compute_indicators(df)
-        for col in ["swing_high_dist", "swing_low_dist", "fvg_bull", "fvg_bear",
-                     "bos_signal", "sweep_signal"]:
+        for col in [
+            "swing_high_dist",
+            "swing_low_dist",
+            "fvg_bull",
+            "fvg_bear",
+            "bos_signal",
+            "sweep_signal",
+        ]:
             assert not result[col].isna().any()
 
     def test_constant_price_smc(self):
         """Constant price should produce zero SMC signals."""
         n = 200
-        df = pd.DataFrame({
-            "open_time": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
-            "open": np.full(n, 50000.0),
-            "high": np.full(n, 50000.0),
-            "low": np.full(n, 50000.0),
-            "close": np.full(n, 50000.0),
-            "volume": np.full(n, 1000.0),
-        })
+        df = pd.DataFrame(
+            {
+                "open_time": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
+                "open": np.full(n, 50000.0),
+                "high": np.full(n, 50000.0),
+                "low": np.full(n, 50000.0),
+                "close": np.full(n, 50000.0),
+                "volume": np.full(n, 1000.0),
+            }
+        )
         result = compute_indicators(df)
         assert (result["bos_signal"] == 0.0).all()
         assert (result["sweep_signal"] == 0.0).all()

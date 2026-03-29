@@ -201,7 +201,11 @@ class TradingEnv(gym.Env):
         if not pd.api.types.is_datetime64_any_dtype(df["open_time"]):
             df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
         # Normalize funding_df column name: compute_indicators expects "funding_time"
-        if funding_df is not None and "time" in funding_df.columns and "funding_time" not in funding_df.columns:
+        if (
+            funding_df is not None
+            and "time" in funding_df.columns
+            and "funding_time" not in funding_df.columns
+        ):
             funding_df = funding_df.rename(columns={"time": "funding_time"})
         df = compute_indicators(df, funding_df=funding_df, oi_df=oi_df, ls_ratio_df=ls_ratio_df)
         return {

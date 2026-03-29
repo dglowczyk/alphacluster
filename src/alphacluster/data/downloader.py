@@ -389,9 +389,7 @@ def download_open_interest(
         }
     )
     df["sum_open_interest"] = pd.to_numeric(df["sum_open_interest"], errors="coerce")
-    df["sum_open_interest_value"] = pd.to_numeric(
-        df["sum_open_interest_value"], errors="coerce"
-    )
+    df["sum_open_interest_value"] = pd.to_numeric(df["sum_open_interest_value"], errors="coerce")
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
 
     df = df.drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)

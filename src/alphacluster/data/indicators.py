@@ -117,15 +117,15 @@ def compute_indicators(
         if not pd.api.types.is_datetime64_any_dtype(odf["timestamp"]):
             odf["timestamp"] = pd.to_datetime(odf["timestamp"], unit="ms", utc=True)
         odf = odf.sort_values("timestamp")
+        # Compute pct_change on daily data before forward-filling to 5m
+        odf["oi_change"] = odf["sum_open_interest"].pct_change(1).fillna(0.0).clip(-1.0, 1.0)
         merged_oi = pd.merge_asof(
             df[["open_time"]].copy(),
-            odf.rename(columns={"timestamp": "open_time"}),
+            odf[["timestamp", "oi_change"]].rename(columns={"timestamp": "open_time"}),
             on="open_time",
             direction="backward",
         )
-        oi_series = merged_oi["sum_open_interest"].ffill().fillna(0.0)
-        oi_pct = oi_series.pct_change(20).fillna(0.0)
-        df["oi_change"] = oi_pct.clip(-1.0, 1.0).values
+        df["oi_change"] = merged_oi["oi_change"].fillna(0.0).values
     else:
         df["oi_change"] = 0.0
 

@@ -12,6 +12,7 @@ import argparse
 import logging
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 from tqdm import tqdm
 
@@ -90,8 +91,10 @@ def main(argv: list[str] | None = None) -> int:
         else datetime.now(tz=timezone.utc)
     )
 
-    klines_path = DEFAULT_KLINES_PATH
-    funding_path = DEFAULT_FUNDING_PATH
+    output_dir = Path(args.output_dir) if args.output_dir else DATA_DIR
+    symbol_lower = args.symbol.lower()
+    klines_path = output_dir / f"{symbol_lower}_5m.parquet"
+    funding_path = output_dir / f"{symbol_lower}_funding.parquet"
 
     if args.validate_only:
         from alphacluster.data.storage import load_from_parquet

@@ -64,11 +64,11 @@ make tournament      # Run ELO tournament
 
 ## Design Decisions
 
-1. **OHLCV + Technical Indicators** -- The observation includes 5 raw OHLCV features plus 14 technical indicators: returns (1/5/20), volatility (20/60), RSI, MACD (histogram + signal diff), Bollinger Bands (%B + width), ATR, volume ratio, OBV slope, VWAP distance. All computed in `data/indicators.py`.
+1. **OHLCV + Technical Indicators** -- The observation includes 5 raw OHLCV features plus 20 technical indicators organized in 5 clusters: Price Action (rsi_14, bb_pctb, vwap_dist, ema_trend), Momentum (return_1, return_20, macd_hist, atr_14), Volume/Microstructure (volume_ratio_20, obv_slope, cvd_slope), Sentiment (funding_rate, oi_change, ls_ratio), SMC Lite (swing_high_dist, swing_low_dist, fvg_bull, fvg_bear, bos_signal, sweep_signal). All computed in `data/indicators.py`.
 
 2. **Discrete action space (36 actions)**: direction (long/short/flat=3) x position size (2%/5%/10%/15%=4) x leverage (5x/10x/15x=3). No 0% size option — choosing long/short always opens a position; flat is the only way to have no position.
 
-3. **Observation space**: Market observation is (576, 19) — 576 candles x 19 features (5 OHLCV + 14 indicators). Account observation is (12,) — 7 original features + 5 trade-tracking features (steps since trade, last PnL, trade count, unrealized PnL velocity, running win rate).
+3. **Observation space**: Market observation is (576, 25) — 576 candles x 25 features (5 OHLCV + 20 indicators). Account observation is (12,) — 7 original features + 5 trade-tracking features (steps since trade, last PnL, trade count, unrealized PnL velocity, running win rate).
 
 4. **Episode length**: 2016 candles (= 7 days of 5-min data).
 
@@ -103,7 +103,7 @@ make tournament      # Run ELO tournament
 - WINDOW_SIZE = 576, EPISODE_LENGTH = 2016
 - N_ACTIONS = 36 (3 x 4 x 3), POSITION_SIZE_OPTIONS = [0.02, 0.05, 0.10, 0.15]
 - LEVERAGE_OPTIONS = [5, 10, 15]
-- N_MARKET_FEATURES = 19 (5 OHLCV + 14 indicators), N_ACCOUNT_FEATURES = 12
+- N_MARKET_FEATURES = 25 (5 OHLCV + 20 indicators), N_ACCOUNT_FEATURES = 12
 - MAX_LEVERAGE = 15
 - LEARNING_RATE = 3e-4, BATCH_SIZE = 128, GAMMA = 0.995
 - TOTAL_TIMESTEPS = 2_000_000

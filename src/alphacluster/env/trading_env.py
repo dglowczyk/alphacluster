@@ -76,6 +76,9 @@ class TradingEnv(gym.Env):
         df: pd.DataFrame | None = None,
         dfs: list[pd.DataFrame] | None = None,
         funding_df: pd.DataFrame | None = None,
+        oi_df: pd.DataFrame | None = None,
+        ls_ratio_df: pd.DataFrame | None = None,
+        sentiment_dfs: list[dict] | None = None,
         window_size: int = WINDOW_SIZE,
         episode_length: int = EPISODE_LENGTH,
         initial_balance: float = 10_000.0,
@@ -99,10 +102,23 @@ class TradingEnv(gym.Env):
 
         # ── Pre-compute data for all assets ───────────────────────────────
         source_dfs = dfs if dfs is not None else [df]
-        self._asset_data: list[dict] = []
-        for raw_df in source_dfs:
-            self._asset_data.append(self._precompute_asset(raw_df))
         self._multi_asset = dfs is not None
+        self._asset_data: list[dict] = []
+        for i, raw_df in enumerate(source_dfs):
+            s_funding = None
+            s_oi = None
+            s_ls = None
+            if sentiment_dfs is not None and i < len(sentiment_dfs):
+                s_funding = sentiment_dfs[i].get("funding")
+                s_oi = sentiment_dfs[i].get("oi")
+                s_ls = sentiment_dfs[i].get("ls_ratio")
+            elif not self._multi_asset:
+                s_funding = funding_df
+                s_oi = oi_df
+                s_ls = ls_ratio_df
+            self._asset_data.append(
+                self._precompute_asset(raw_df, funding_df=s_funding, oi_df=s_oi, ls_ratio_df=s_ls)
+            )
 
         # Set initial active asset (first one)
         self._active_asset_idx = 0
@@ -174,12 +190,20 @@ class TradingEnv(gym.Env):
     # ── Asset management ─────────────────────────────────────────────────
 
     @staticmethod
-    def _precompute_asset(raw_df: pd.DataFrame) -> dict:
+    def _precompute_asset(
+        raw_df: pd.DataFrame,
+        funding_df: pd.DataFrame | None = None,
+        oi_df: pd.DataFrame | None = None,
+        ls_ratio_df: pd.DataFrame | None = None,
+    ) -> dict:
         """Pre-compute indicators and numpy arrays for a single asset."""
         df = raw_df.reset_index(drop=True)
         if not pd.api.types.is_datetime64_any_dtype(df["open_time"]):
             df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
-        df = compute_indicators(df)
+        # Normalize funding_df column name: compute_indicators expects "funding_time"
+        if funding_df is not None and "time" in funding_df.columns and "funding_time" not in funding_df.columns:
+            funding_df = funding_df.rename(columns={"time": "funding_time"})
+        df = compute_indicators(df, funding_df=funding_df, oi_df=oi_df, ls_ratio_df=ls_ratio_df)
         return {
             "open": df["open"].to_numpy(dtype=np.float64),
             "high": df["high"].to_numpy(dtype=np.float64),

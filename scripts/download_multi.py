@@ -18,7 +18,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from alphacluster.config import DATA_DIR
-from alphacluster.data.downloader import download_funding_rates, download_klines
+from alphacluster.data.downloader import download_funding_rates, download_klines, download_open_interest, download_ls_ratio
 from alphacluster.data.storage import append_to_parquet, get_last_timestamp
 from alphacluster.data.validator import detect_outliers, fill_gaps, validate_klines
 
@@ -72,6 +72,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--funding", action="store_true", help="Also download funding rates"
     )
     parser.add_argument(
+        "--oi", action="store_true", default=True, help="Download open interest data"
+    )
+    parser.add_argument(
+        "--ls-ratio", action="store_true", default=True, help="Download long/short ratio data"
+    )
+    parser.add_argument(
         "--output-dir", type=str, default=None, help=f"Output directory (default: {DATA_DIR})"
     )
     return parser.parse_args(argv)
@@ -83,6 +89,8 @@ def download_symbol(
     end_date: datetime,
     output_dir: Path,
     funding: bool = False,
+    oi: bool = False,
+    ls_ratio: bool = False,
 ) -> None:
     symbol_lower = symbol.lower()
     klines_path = output_dir / f"{symbol_lower}_5m.parquet"
@@ -149,6 +157,50 @@ def download_symbol(
             n_new = append_to_parquet(df_funding, funding_path, time_col="funding_time")
             logger.info("[%s] +%d funding records", symbol, n_new)
 
+    if oi:
+        from alphacluster.data.downloader import download_open_interest
+
+        oi_path = output_dir / f"{symbol_lower}_oi.parquet"
+        last_oi_ts = get_last_timestamp(oi_path, time_col="timestamp")
+        oi_start = start_date
+        if last_oi_ts is not None:
+            oi_start = last_oi_ts.to_pydatetime().replace(tzinfo=timezone.utc)
+
+        progress_oi = tqdm(desc=f"{symbol} OI", unit=" records", leave=False)
+        df_oi = download_open_interest(
+            symbol=symbol,
+            start_date=oi_start,
+            end_date=end_date,
+            progress_callback=lambda n: progress_oi.update(n),
+        )
+        progress_oi.close()
+
+        if not df_oi.empty:
+            n_new = append_to_parquet(df_oi, oi_path, time_col="timestamp")
+            logger.info("[%s] +%d OI records", symbol, n_new)
+
+    if ls_ratio:
+        from alphacluster.data.downloader import download_ls_ratio
+
+        ls_path = output_dir / f"{symbol_lower}_ls_ratio.parquet"
+        last_ls_ts = get_last_timestamp(ls_path, time_col="timestamp")
+        ls_start = start_date
+        if last_ls_ts is not None:
+            ls_start = last_ls_ts.to_pydatetime().replace(tzinfo=timezone.utc)
+
+        progress_ls = tqdm(desc=f"{symbol} L/S", unit=" records", leave=False)
+        df_ls = download_ls_ratio(
+            symbol=symbol,
+            start_date=ls_start,
+            end_date=end_date,
+            progress_callback=lambda n: progress_ls.update(n),
+        )
+        progress_ls.close()
+
+        if not df_ls.empty:
+            n_new = append_to_parquet(df_ls, ls_path, time_col="timestamp")
+            logger.info("[%s] +%d L/S ratio records", symbol, n_new)
+
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
@@ -170,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  [{i}/{total}] {symbol}")
         print(f"{'='*60}")
         try:
-            download_symbol(symbol, start_date, end_date, output_dir, args.funding)
+            download_symbol(symbol, start_date, end_date, output_dir, args.funding, args.oi, args.ls_ratio)
         except Exception as e:
             logger.error("[%s] FAILED: %s", symbol, e)
             failed.append((symbol, str(e)))

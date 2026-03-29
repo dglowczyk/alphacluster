@@ -13,7 +13,7 @@ import pandas as pd
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Compute technical indicators and append them as columns to *df*.
 
-    Adds 9 indicator columns to the DataFrame.  NaN values from warmup
+    Adds 11 indicator columns to the DataFrame.  NaN values from warmup
     periods are forward/back-filled so every row has valid data.
 
     Parameters
@@ -24,7 +24,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        A copy of *df* with 9 additional indicator columns.
+        A copy of *df* with 11 additional indicator columns.
     """
     df = df.copy()
     if "open_time" in df.columns and not pd.api.types.is_datetime64_any_dtype(df["open_time"]):
@@ -65,6 +65,21 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # ── VWAP distance ─────────────────────────────────────────────────
     df["vwap_dist"] = _vwap_distance(close, high, low, volume)
 
+    # ── EMA trend ────────────────────────────────────────────────────
+    ema21 = close.ewm(span=21, adjust=False).mean()
+    ema55 = close.ewm(span=55, adjust=False).mean()
+    close_safe = close.replace(0, 1)
+    df["ema_trend"] = (ema21 - ema55) / close_safe
+
+    # ── CVD slope (Cumulative Volume Delta approximation) ────────
+    opn = df["open"]
+    high_low_range = (high - low).replace(0, 1)
+    cvd_delta = ((close - opn) / high_low_range) * volume
+    cvd = cvd_delta.cumsum()
+    cvd_slope_raw = cvd.diff(20)
+    vol_mean_cvd = volume.rolling(20).mean().replace(0, 1)
+    df["cvd_slope"] = cvd_slope_raw / vol_mean_cvd
+
     # ── Fill NaNs from warmup periods ─────────────────────────────────
     indicator_cols = [
         "return_1",
@@ -76,6 +91,8 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         "volume_ratio_20",
         "obv_slope",
         "vwap_dist",
+        "ema_trend",
+        "cvd_slope",
     ]
     df[indicator_cols] = df[indicator_cols].ffill().bfill().fillna(0.0)
 
@@ -92,8 +109,10 @@ INDICATOR_COLUMNS: list[str] = [
     "volume_ratio_20",
     "obv_slope",
     "vwap_dist",
+    "ema_trend",
+    "cvd_slope",
 ]
-"""Names of the 9 indicator columns added by :func:`compute_indicators`."""
+"""Names of the 11 indicator columns added by :func:`compute_indicators`."""
 
 
 # ── Private helpers ───────────────────────────────────────────────────────

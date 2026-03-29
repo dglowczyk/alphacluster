@@ -125,8 +125,29 @@ class TestComputeIndicators:
             assert not result[col].isna().any()
 
     def test_indicator_count(self):
-        """Should have exactly 9 indicator columns."""
-        assert len(INDICATOR_COLUMNS) == 9
+        """Should have exactly 11 indicator columns."""
+        assert len(INDICATOR_COLUMNS) == 11
+
+    def test_ema_trend_present_and_finite(self):
+        df = _make_ohlcv(n=200)
+        result = compute_indicators(df)
+        assert "ema_trend" in result.columns
+        assert not result["ema_trend"].isna().any()
+        assert np.all(np.isfinite(result["ema_trend"].values))
+
+    def test_ema_trend_range(self):
+        """EMA trend should be small relative values."""
+        df = _make_ohlcv(n=500)
+        result = compute_indicators(df)
+        vals = result["ema_trend"].values[60:]
+        assert np.abs(vals).max() < 0.2, "ema_trend values unreasonably large"
+
+    def test_cvd_slope_present_and_finite(self):
+        df = _make_ohlcv(n=200)
+        result = compute_indicators(df)
+        assert "cvd_slope" in result.columns
+        assert not result["cvd_slope"].isna().any()
+        assert np.all(np.isfinite(result["cvd_slope"].values))
 
     def test_returns_are_small(self):
         """Return features should be small for normal price data."""

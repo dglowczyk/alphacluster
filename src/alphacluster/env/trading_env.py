@@ -53,11 +53,14 @@ class TradingEnv(gym.Env):
     df:
         DataFrame with columns ``open_time, open, high, low, close, volume``.
         ``open_time`` must be a timezone-aware or naive UTC datetime / int
-        timestamp in **milliseconds**.
+        timestamp in **milliseconds**.  Mutually exclusive with *dfs*.
+    dfs:
+        List of DataFrames (one per asset) for multi-asset training.  On each
+        ``reset()`` a random asset is selected.  Mutually exclusive with *df*.
     funding_df:
         Optional DataFrame with columns ``time, funding_rate``.  ``time``
         should be a datetime or int timestamp (ms).  If *None*, funding is
-        ignored.
+        ignored.  Only used with single-asset *df*.
     window_size:
         Number of past candles in each observation.
     episode_length:
@@ -70,7 +73,8 @@ class TradingEnv(gym.Env):
 
     def __init__(
         self,
-        df: pd.DataFrame,
+        df: pd.DataFrame | None = None,
+        dfs: list[pd.DataFrame] | None = None,
         funding_df: pd.DataFrame | None = None,
         window_size: int = WINDOW_SIZE,
         episode_length: int = EPISODE_LENGTH,
@@ -81,8 +85,11 @@ class TradingEnv(gym.Env):
     ) -> None:
         super().__init__()
 
-        # ── Store data ───────────────────────────────────────────────────
-        self.df = df.reset_index(drop=True)
+        if df is None and dfs is None:
+            raise ValueError("Either df or dfs must be provided")
+        if df is not None and dfs is not None:
+            raise ValueError("Provide df or dfs, not both")
+
         self.window_size = window_size
         self.episode_length = episode_length
         self.initial_balance = initial_balance
@@ -90,25 +97,18 @@ class TradingEnv(gym.Env):
         self._fixed_size_pct = fixed_size_pct
         self._fixed_leverage = fixed_leverage
 
-        # Ensure open_time is datetime
-        if not pd.api.types.is_datetime64_any_dtype(self.df["open_time"]):
-            self.df["open_time"] = pd.to_datetime(self.df["open_time"], unit="ms", utc=True)
+        # ── Pre-compute data for all assets ───────────────────────────────
+        source_dfs = dfs if dfs is not None else [df]
+        self._asset_data: list[dict] = []
+        for raw_df in source_dfs:
+            self._asset_data.append(self._precompute_asset(raw_df))
+        self._multi_asset = dfs is not None
 
-        # Compute technical indicators
-        self.df = compute_indicators(self.df)
+        # Set initial active asset (first one)
+        self._active_asset_idx = 0
+        self._activate_asset(0)
 
-        # Pre-compute OHLCV numpy arrays for speed
-        self._open = self.df["open"].to_numpy(dtype=np.float64)
-        self._high = self.df["high"].to_numpy(dtype=np.float64)
-        self._low = self.df["low"].to_numpy(dtype=np.float64)
-        self._close = self.df["close"].to_numpy(dtype=np.float64)
-        self._volume = self.df["volume"].to_numpy(dtype=np.float64)
-        self._timestamps = self.df["open_time"].to_numpy()
-
-        # Pre-compute indicator arrays
-        self._indicators = self.df[INDICATOR_COLUMNS].to_numpy(dtype=np.float64)
-
-        # Funding lookup
+        # Funding lookup (single-asset only)
         self._funding_map: dict[int, float] = {}
         if funding_df is not None:
             fdf = funding_df.copy()
@@ -120,6 +120,9 @@ class TradingEnv(gym.Env):
             for _, row in fdf.iterrows():
                 ts = int(pd.Timestamp(row[time_col]).timestamp())
                 self._funding_map[ts] = float(row["funding_rate"])
+
+        # ── Backward-compat: expose df for code that reads len(env.df) ──
+        self.df = source_dfs[0]
 
         # ── Spaces ───────────────────────────────────────────────────────
         self.observation_space = spaces.Dict(
@@ -168,6 +171,39 @@ class TradingEnv(gym.Env):
         self._trade_just_completed: bool = False
         self._step_fees: float = 0.0
 
+    # ── Asset management ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _precompute_asset(raw_df: pd.DataFrame) -> dict:
+        """Pre-compute indicators and numpy arrays for a single asset."""
+        df = raw_df.reset_index(drop=True)
+        if not pd.api.types.is_datetime64_any_dtype(df["open_time"]):
+            df["open_time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
+        df = compute_indicators(df)
+        return {
+            "open": df["open"].to_numpy(dtype=np.float64),
+            "high": df["high"].to_numpy(dtype=np.float64),
+            "low": df["low"].to_numpy(dtype=np.float64),
+            "close": df["close"].to_numpy(dtype=np.float64),
+            "volume": df["volume"].to_numpy(dtype=np.float64),
+            "timestamps": df["open_time"].to_numpy(),
+            "indicators": df[INDICATOR_COLUMNS].to_numpy(dtype=np.float64),
+            "length": len(df),
+        }
+
+    def _activate_asset(self, idx: int) -> None:
+        """Switch active arrays to asset at *idx*."""
+        data = self._asset_data[idx]
+        self._open = data["open"]
+        self._high = data["high"]
+        self._low = data["low"]
+        self._close = data["close"]
+        self._volume = data["volume"]
+        self._timestamps = data["timestamps"]
+        self._indicators = data["indicators"]
+        self._data_len = data["length"]
+        self._active_asset_idx = idx
+
     # ── Gymnasium API ────────────────────────────────────────────────────
 
     def reset(
@@ -178,9 +214,14 @@ class TradingEnv(gym.Env):
     ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         super().reset(seed=seed)
 
+        # Pick a random asset (multi-asset mode)
+        if self._multi_asset:
+            asset_idx = self.np_random.integers(0, len(self._asset_data))
+            self._activate_asset(asset_idx)
+
         # Pick a random start ensuring room for window + episode
         min_start = self.window_size
-        max_start = len(self.df) - self.episode_length - 1
+        max_start = self._data_len - self.episode_length - 1
         if max_start < min_start:
             max_start = min_start  # dataset is small — will overlap
 
@@ -331,7 +372,7 @@ class TradingEnv(gym.Env):
             terminated = True
 
         # Also terminate if out of data
-        if self._current_idx >= len(self.df) - 1:
+        if self._current_idx >= self._data_len - 1:
             terminated = True
 
         obs = self._get_observation()

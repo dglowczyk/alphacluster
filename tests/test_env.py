@@ -1268,6 +1268,77 @@ class TestSimpleActions:
 
 
 # ===========================================================================
+# Multi-asset tests
+# ===========================================================================
+
+
+class TestMultiAsset:
+    """Tests for multi-asset training support (dfs parameter)."""
+
+    def test_multi_asset_init(self):
+        """Multi-asset env initializes with list of DataFrames."""
+        df1 = _make_df(seed=1)
+        df2 = _make_df(seed=2, start_price=3_000.0)
+        env = TradingEnv(dfs=[df1, df2], simple_actions=True)
+        assert len(env._asset_data) == 2
+        assert env._multi_asset is True
+
+    def test_multi_asset_reset_switches_asset(self):
+        """After many resets, at least two different assets should be selected."""
+        df1 = _make_df(seed=1)
+        df2 = _make_df(seed=2, start_price=3_000.0)
+        env = TradingEnv(dfs=[df1, df2], simple_actions=True)
+
+        seen_assets = set()
+        for i in range(20):
+            env.reset(seed=i)
+            seen_assets.add(env._active_asset_idx)
+        assert len(seen_assets) == 2, f"Expected 2 assets, saw {seen_assets}"
+
+    def test_multi_asset_episode_runs(self):
+        """A full episode completes without error in multi-asset mode."""
+        df1 = _make_df(seed=1)
+        df2 = _make_df(seed=2, start_price=3_000.0)
+        env = TradingEnv(dfs=[df1, df2], simple_actions=True)
+        env.reset(seed=42)
+
+        for _ in range(100):
+            action = env.action_space.sample()
+            obs, reward, terminated, truncated, info = env.step(action)
+            if terminated or truncated:
+                break
+
+    def test_multi_asset_observation_shape(self):
+        """Observation shape is consistent across asset switches."""
+        df1 = _make_df(seed=1)
+        df2 = _make_df(seed=2, start_price=3_000.0)
+        env = TradingEnv(dfs=[df1, df2], simple_actions=True)
+
+        for i in range(5):
+            obs, _ = env.reset(seed=i)
+            assert obs["market"].shape == (WINDOW_SIZE, N_MARKET_FEATURES)
+            assert obs["account"].shape == (N_ACCOUNT_FEATURES,)
+
+    def test_single_df_backward_compat(self):
+        """Passing df= still works as before (single-asset mode)."""
+        env = TradingEnv(df=_make_df(), simple_actions=True)
+        assert env._multi_asset is False
+        assert len(env._asset_data) == 1
+        obs, _ = env.reset(seed=0)
+        assert obs["market"].shape == (WINDOW_SIZE, N_MARKET_FEATURES)
+
+    def test_both_df_and_dfs_raises(self):
+        """Providing both df and dfs raises ValueError."""
+        with pytest.raises(ValueError, match="not both"):
+            TradingEnv(df=_make_df(), dfs=[_make_df()], simple_actions=True)
+
+    def test_neither_df_nor_dfs_raises(self):
+        """Providing neither df nor dfs raises ValueError."""
+        with pytest.raises(ValueError, match="must be provided"):
+            TradingEnv(simple_actions=True)
+
+
+# ===========================================================================
 # Observation shape integration tests (v4: N_MARKET_FEATURES=25)
 # ===========================================================================
 

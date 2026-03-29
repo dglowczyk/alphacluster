@@ -13,7 +13,7 @@ import pandas as pd
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Compute technical indicators and append them as columns to *df*.
 
-    Adds 14 indicator columns to the DataFrame.  NaN values from warmup
+    Adds 9 indicator columns to the DataFrame.  NaN values from warmup
     periods are forward/back-filled so every row has valid data.
 
     Parameters
@@ -24,7 +24,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        A copy of *df* with 14 additional indicator columns.
+        A copy of *df* with 9 additional indicator columns.
     """
     df = df.copy()
     if "open_time" in df.columns and not pd.api.types.is_datetime64_any_dtype(df["open_time"]):
@@ -36,28 +36,20 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     # ── Returns ───────────────────────────────────────────────────────
     df["return_1"] = close.pct_change(1)
-    df["return_5"] = close.pct_change(5)
     df["return_20"] = close.pct_change(20)
-
-    # ── Volatility ────────────────────────────────────────────────────
-    pct = close.pct_change()
-    df["volatility_20"] = pct.rolling(20).std()
-    df["volatility_60"] = pct.rolling(60).std()
 
     # ── RSI(14) ───────────────────────────────────────────────────────
     df["rsi_14"] = _rsi(close, 14) / 50.0 - 1.0  # scale to [-1, 1]
 
     # ── MACD ──────────────────────────────────────────────────────────
-    macd_line, signal_line, histogram = _macd(close, 12, 26, 9)
+    _macd_line, _signal_line, histogram = _macd(close, 12, 26, 9)
     norm = close * 0.01
     norm = norm.replace(0, 1)  # safety
     df["macd_hist"] = histogram / norm
-    df["macd_signal_diff"] = (macd_line - signal_line) / norm
 
     # ── Bollinger Bands ───────────────────────────────────────────────
-    bb_pctb, bb_width = _bollinger(close, 20, 2)
+    bb_pctb, _bb_width = _bollinger(close, 20, 2)
     df["bb_pctb"] = bb_pctb
-    df["bb_width"] = bb_width
 
     # ── ATR(14) ───────────────────────────────────────────────────────
     df["atr_14"] = _atr(high, low, close, 14) / close
@@ -76,15 +68,10 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # ── Fill NaNs from warmup periods ─────────────────────────────────
     indicator_cols = [
         "return_1",
-        "return_5",
         "return_20",
-        "volatility_20",
-        "volatility_60",
         "rsi_14",
         "macd_hist",
-        "macd_signal_diff",
         "bb_pctb",
-        "bb_width",
         "atr_14",
         "volume_ratio_20",
         "obv_slope",
@@ -97,21 +84,16 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 INDICATOR_COLUMNS: list[str] = [
     "return_1",
-    "return_5",
     "return_20",
-    "volatility_20",
-    "volatility_60",
     "rsi_14",
     "macd_hist",
-    "macd_signal_diff",
     "bb_pctb",
-    "bb_width",
     "atr_14",
     "volume_ratio_20",
     "obv_slope",
     "vwap_dist",
 ]
-"""Names of the 14 indicator columns added by :func:`compute_indicators`."""
+"""Names of the 9 indicator columns added by :func:`compute_indicators`."""
 
 
 # ── Private helpers ───────────────────────────────────────────────────────

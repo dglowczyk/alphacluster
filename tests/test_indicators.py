@@ -125,13 +125,13 @@ class TestComputeIndicators:
             assert not result[col].isna().any()
 
     def test_indicator_count(self):
-        """Should have exactly 14 indicator columns."""
-        assert len(INDICATOR_COLUMNS) == 14
+        """Should have exactly 9 indicator columns."""
+        assert len(INDICATOR_COLUMNS) == 9
 
     def test_returns_are_small(self):
         """Return features should be small for normal price data."""
         df = _make_ohlcv(n=500)
         result = compute_indicators(df)
-        for col in ["return_1", "return_5", "return_20"]:
+        for col in ["return_1", "return_20"]:
             vals = result[col].values[60:]  # skip warmup
             assert np.abs(vals).max() < 0.5, f"{col} has unreasonably large values"

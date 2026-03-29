@@ -17,6 +17,7 @@ from alphacluster.data.downloader import (
     MAX_CANDLES_PER_REQUEST,
     download_funding_rates,
     download_klines,
+    download_ls_ratio,
     download_open_interest,
 )
 from alphacluster.data.live_feed import HistoricalDataSource, LiveDataSource
@@ -288,6 +289,60 @@ class TestDownloadOpenInterest:
         session.get.return_value = resp
 
         df = download_open_interest(
+            symbol="BTCUSDT",
+            start_date=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            end_date=datetime(2099, 1, 2, tzinfo=timezone.utc),
+            session=session,
+        )
+        assert df.empty
+
+
+def _make_ls_ratio_row(timestamp_ms: int) -> dict:
+    return {
+        "symbol": "BTCUSDT",
+        "longShortRatio": "1.5",
+        "longAccount": "0.6",
+        "shortAccount": "0.4",
+        "timestamp": timestamp_ms,
+    }
+
+
+class TestDownloadLsRatio:
+    """Tests for download_ls_ratio with mocked HTTP responses."""
+
+    def test_fetch_ls_ratio(self):
+        start = datetime(2023, 1, 1, tzinfo=timezone.utc)
+        start_ms = int(start.timestamp() * 1000)
+        five_min_ms = 5 * 60 * 1000
+        rows = [_make_ls_ratio_row(start_ms + i * five_min_ms) for i in range(5)]
+
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = rows
+        resp.raise_for_status = MagicMock()
+        session.get.return_value = resp
+
+        df = download_ls_ratio(
+            symbol="BTCUSDT",
+            start_date=start,
+            end_date=datetime(2023, 1, 2, tzinfo=timezone.utc),
+            session=session,
+        )
+        assert len(df) == 5
+        assert "timestamp" in df.columns
+        assert "long_short_ratio" in df.columns
+        assert "long_account" in df.columns
+        assert "short_account" in df.columns
+        assert pd.api.types.is_datetime64_any_dtype(df["timestamp"])
+
+    def test_empty_ls_ratio(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = []
+        resp.raise_for_status = MagicMock()
+        session.get.return_value = resp
+
+        df = download_ls_ratio(
             symbol="BTCUSDT",
             start_date=datetime(2099, 1, 1, tzinfo=timezone.utc),
             end_date=datetime(2099, 1, 2, tzinfo=timezone.utc),

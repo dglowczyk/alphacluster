@@ -398,3 +398,101 @@ def download_open_interest(
 
     logger.info("Downloaded %d open interest records for %s", len(df), symbol)
     return df[["timestamp", "symbol", "sum_open_interest", "sum_open_interest_value"]]
+
+
+_MAX_LS_RATIO_PER_REQUEST = 500
+
+
+def download_ls_ratio(
+    symbol: str = DEFAULT_SYMBOL,
+    start_date: datetime | str | None = None,
+    end_date: datetime | str | None = None,
+    period: str = "5m",
+    *,
+    session: requests.Session | None = None,
+    progress_callback: callable | None = None,
+) -> pd.DataFrame:
+    """Fetch global long/short account ratio from the Binance Futures API.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: ``timestamp, symbol, long_short_ratio, long_account, short_account``.
+    """
+    if isinstance(start_date, str):
+        start_date = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
+    if isinstance(end_date, str):
+        end_date = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
+
+    if start_date is None:
+        start_date = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    if end_date is None:
+        end_date = datetime.now(tz=timezone.utc)
+
+    if start_date.tzinfo is None:
+        start_date = start_date.replace(tzinfo=timezone.utc)
+    if end_date.tzinfo is None:
+        end_date = end_date.replace(tzinfo=timezone.utc)
+
+    sess = session or requests.Session()
+    url = f"{BINANCE_BASE_URL}/futures/data/globalLongShortAccountRatio"
+
+    all_rows: list[dict] = []
+    current_start_ms = _ts_ms(start_date)
+    end_ms = _ts_ms(end_date)
+    last_request_time = 0.0
+
+    while current_start_ms < end_ms:
+        elapsed = time.monotonic() - last_request_time
+        if elapsed < _MIN_REQUEST_INTERVAL_S:
+            time.sleep(_MIN_REQUEST_INTERVAL_S - elapsed)
+
+        params = {
+            "symbol": symbol,
+            "period": period,
+            "startTime": current_start_ms,
+            "endTime": end_ms,
+            "limit": _MAX_LS_RATIO_PER_REQUEST,
+        }
+
+        last_request_time = time.monotonic()
+        resp = sess.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+
+        if not data:
+            break
+
+        all_rows.extend(data)
+
+        if progress_callback is not None:
+            progress_callback(len(data))
+
+        last_time = int(data[-1]["timestamp"])
+        current_start_ms = last_time + 1
+
+        if len(data) < _MAX_LS_RATIO_PER_REQUEST:
+            break
+
+    if not all_rows:
+        return pd.DataFrame(
+            columns=["timestamp", "symbol", "long_short_ratio", "long_account", "short_account"]
+        )
+
+    df = pd.DataFrame(all_rows)
+    df = df.rename(
+        columns={
+            "longShortRatio": "long_short_ratio",
+            "longAccount": "long_account",
+            "shortAccount": "short_account",
+        }
+    )
+    df["long_short_ratio"] = pd.to_numeric(df["long_short_ratio"], errors="coerce")
+    df["long_account"] = pd.to_numeric(df["long_account"], errors="coerce")
+    df["short_account"] = pd.to_numeric(df["short_account"], errors="coerce")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+
+    df = df.drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
+
+    logger.info("Downloaded %d long/short ratio records for %s", len(df), symbol)
+    return df[["timestamp", "symbol", "long_short_ratio", "long_account", "short_account"]]

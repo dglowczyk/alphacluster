@@ -285,3 +285,116 @@ def download_funding_rates(
 
     logger.info("Downloaded %d funding rate records for %s", len(df), symbol)
     return df
+
+
+# Maximum open interest records per request.
+_MAX_OI_PER_REQUEST = 500
+
+
+def download_open_interest(
+    symbol: str = DEFAULT_SYMBOL,
+    start_date: datetime | str | None = None,
+    end_date: datetime | str | None = None,
+    period: str = "5m",
+    *,
+    session: requests.Session | None = None,
+    progress_callback: callable | None = None,
+) -> pd.DataFrame:
+    """Fetch open interest history from the Binance Futures API.
+
+    Parameters
+    ----------
+    symbol:
+        Trading pair, e.g. ``"BTCUSDT"``.
+    start_date, end_date:
+        Date range (inclusive).  ``end_date`` defaults to now.
+    period:
+        Data period: ``"5m"``, ``"15m"``, ``"30m"``, ``"1h"``, ``"2h"``,
+        ``"4h"``, ``"6h"``, ``"12h"``, ``"1d"``.
+    session:
+        Optional ``requests.Session``.
+    progress_callback:
+        Optional callable(n_records_fetched).
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: ``timestamp, symbol, sum_open_interest, sum_open_interest_value``.
+    """
+    if isinstance(start_date, str):
+        start_date = datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc)
+    if isinstance(end_date, str):
+        end_date = datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc)
+
+    if start_date is None:
+        start_date = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    if end_date is None:
+        end_date = datetime.now(tz=timezone.utc)
+
+    if start_date.tzinfo is None:
+        start_date = start_date.replace(tzinfo=timezone.utc)
+    if end_date.tzinfo is None:
+        end_date = end_date.replace(tzinfo=timezone.utc)
+
+    sess = session or requests.Session()
+    url = f"{BINANCE_BASE_URL}/futures/data/openInterestHist"
+
+    all_rows: list[dict] = []
+    current_start_ms = _ts_ms(start_date)
+    end_ms = _ts_ms(end_date)
+    last_request_time = 0.0
+
+    while current_start_ms < end_ms:
+        elapsed = time.monotonic() - last_request_time
+        if elapsed < _MIN_REQUEST_INTERVAL_S:
+            time.sleep(_MIN_REQUEST_INTERVAL_S - elapsed)
+
+        params = {
+            "symbol": symbol,
+            "period": period,
+            "startTime": current_start_ms,
+            "endTime": end_ms,
+            "limit": _MAX_OI_PER_REQUEST,
+        }
+
+        last_request_time = time.monotonic()
+        resp = sess.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+
+        if not data:
+            break
+
+        all_rows.extend(data)
+
+        if progress_callback is not None:
+            progress_callback(len(data))
+
+        last_time = int(data[-1]["timestamp"])
+        current_start_ms = last_time + 1
+
+        if len(data) < _MAX_OI_PER_REQUEST:
+            break
+
+    if not all_rows:
+        return pd.DataFrame(
+            columns=["timestamp", "symbol", "sum_open_interest", "sum_open_interest_value"]
+        )
+
+    df = pd.DataFrame(all_rows)
+    df = df.rename(
+        columns={
+            "sumOpenInterest": "sum_open_interest",
+            "sumOpenInterestValue": "sum_open_interest_value",
+        }
+    )
+    df["sum_open_interest"] = pd.to_numeric(df["sum_open_interest"], errors="coerce")
+    df["sum_open_interest_value"] = pd.to_numeric(
+        df["sum_open_interest_value"], errors="coerce"
+    )
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+
+    df = df.drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
+
+    logger.info("Downloaded %d open interest records for %s", len(df), symbol)
+    return df[["timestamp", "symbol", "sum_open_interest", "sum_open_interest_value"]]

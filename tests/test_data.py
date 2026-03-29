@@ -17,6 +17,7 @@ from alphacluster.data.downloader import (
     MAX_CANDLES_PER_REQUEST,
     download_funding_rates,
     download_klines,
+    download_open_interest,
 )
 from alphacluster.data.live_feed import HistoricalDataSource, LiveDataSource
 from alphacluster.data.storage import (
@@ -54,6 +55,15 @@ def _make_kline_row(open_time_ms: int, close_price: float = 10000.0) -> list:
 
 def _make_kline_batch(start_ms: int, n: int, close_price: float = 10000.0) -> list[list]:
     return [_make_kline_row(start_ms + i * _FIVE_MIN_MS, close_price) for i in range(n)]
+
+
+def _make_oi_row(timestamp_ms: int) -> dict:
+    return {
+        "symbol": "BTCUSDT",
+        "sumOpenInterest": "50000.00",
+        "sumOpenInterestValue": "2500000000.00",
+        "timestamp": timestamp_ms,
+    }
 
 
 def _make_funding_row(funding_time_ms: int) -> dict:
@@ -236,6 +246,49 @@ class TestDownloadFundingRates:
         session.get.return_value = resp
 
         df = download_funding_rates(
+            start_date=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            end_date=datetime(2099, 1, 2, tzinfo=timezone.utc),
+            session=session,
+        )
+        assert df.empty
+
+
+class TestDownloadOpenInterest:
+    """Tests for download_open_interest with mocked HTTP responses."""
+
+    def test_fetch_open_interest(self):
+        start = datetime(2023, 1, 1, tzinfo=timezone.utc)
+        start_ms = int(start.timestamp() * 1000)
+        five_min_ms = 5 * 60 * 1000
+        rows = [_make_oi_row(start_ms + i * five_min_ms) for i in range(5)]
+
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = rows
+        resp.raise_for_status = MagicMock()
+        session.get.return_value = resp
+
+        df = download_open_interest(
+            symbol="BTCUSDT",
+            start_date=start,
+            end_date=datetime(2023, 1, 2, tzinfo=timezone.utc),
+            session=session,
+        )
+        assert len(df) == 5
+        assert "timestamp" in df.columns
+        assert "sum_open_interest" in df.columns
+        assert "sum_open_interest_value" in df.columns
+        assert pd.api.types.is_datetime64_any_dtype(df["timestamp"])
+
+    def test_empty_open_interest(self):
+        session = MagicMock()
+        resp = MagicMock()
+        resp.json.return_value = []
+        resp.raise_for_status = MagicMock()
+        session.get.return_value = resp
+
+        df = download_open_interest(
+            symbol="BTCUSDT",
             start_date=datetime(2099, 1, 1, tzinfo=timezone.utc),
             end_date=datetime(2099, 1, 2, tzinfo=timezone.utc),
             session=session,

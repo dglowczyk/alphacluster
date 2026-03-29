@@ -10,21 +10,36 @@ import numpy as np
 import pandas as pd
 
 
-def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
+def compute_indicators(
+    df: pd.DataFrame,
+    funding_df: pd.DataFrame | None = None,
+    oi_df: pd.DataFrame | None = None,
+    ls_ratio_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Compute technical indicators and append them as columns to *df*.
 
-    Adds 11 indicator columns to the DataFrame.  NaN values from warmup
+    Adds 14 indicator columns to the DataFrame.  NaN values from warmup
     periods are forward/back-filled so every row has valid data.
 
     Parameters
     ----------
     df:
         DataFrame with at least ``open, high, low, close, volume`` columns.
+        Must also have an ``open_time`` column (datetime64) for sentiment merging.
+    funding_df:
+        Optional DataFrame with ``funding_time`` and ``funding_rate`` columns.
+        When None, the ``funding_rate`` column is filled with zeros.
+    oi_df:
+        Optional DataFrame with ``timestamp`` and ``sum_open_interest`` columns.
+        When None, the ``oi_change`` column is filled with zeros.
+    ls_ratio_df:
+        Optional DataFrame with ``timestamp`` and ``long_short_ratio`` columns.
+        When None, the ``ls_ratio`` column is filled with zeros.
 
     Returns
     -------
     pd.DataFrame
-        A copy of *df* with 11 additional indicator columns.
+        A copy of *df* with 14 additional indicator columns.
     """
     df = df.copy()
     if "open_time" in df.columns and not pd.api.types.is_datetime64_any_dtype(df["open_time"]):
@@ -80,6 +95,56 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     vol_mean_cvd = volume.rolling(20).mean().replace(0, 1)
     df["cvd_slope"] = cvd_slope_raw / vol_mean_cvd
 
+    # ── Sentiment: Funding rate ──────────────────────────────────────────
+    if funding_df is not None and not funding_df.empty:
+        fdf = funding_df[["funding_time", "funding_rate"]].copy()
+        if not pd.api.types.is_datetime64_any_dtype(fdf["funding_time"]):
+            fdf["funding_time"] = pd.to_datetime(fdf["funding_time"], unit="ms", utc=True)
+        fdf = fdf.sort_values("funding_time")
+        merged = pd.merge_asof(
+            df[["open_time"]].copy(),
+            fdf.rename(columns={"funding_time": "open_time"}),
+            on="open_time",
+            direction="backward",
+        )
+        df["funding_rate"] = (merged["funding_rate"].fillna(0.0) * 1000).values
+    else:
+        df["funding_rate"] = 0.0
+
+    # ── Sentiment: Open Interest change ─────────────────────────────────
+    if oi_df is not None and not oi_df.empty:
+        odf = oi_df[["timestamp", "sum_open_interest"]].copy()
+        if not pd.api.types.is_datetime64_any_dtype(odf["timestamp"]):
+            odf["timestamp"] = pd.to_datetime(odf["timestamp"], unit="ms", utc=True)
+        odf = odf.sort_values("timestamp")
+        merged_oi = pd.merge_asof(
+            df[["open_time"]].copy(),
+            odf.rename(columns={"timestamp": "open_time"}),
+            on="open_time",
+            direction="backward",
+        )
+        oi_series = merged_oi["sum_open_interest"].ffill().fillna(0.0)
+        oi_pct = oi_series.pct_change(20).fillna(0.0)
+        df["oi_change"] = oi_pct.clip(-1.0, 1.0).values
+    else:
+        df["oi_change"] = 0.0
+
+    # ── Sentiment: Long/Short ratio ──────────────────────────────────────
+    if ls_ratio_df is not None and not ls_ratio_df.empty:
+        ldf = ls_ratio_df[["timestamp", "long_short_ratio"]].copy()
+        if not pd.api.types.is_datetime64_any_dtype(ldf["timestamp"]):
+            ldf["timestamp"] = pd.to_datetime(ldf["timestamp"], unit="ms", utc=True)
+        ldf = ldf.sort_values("timestamp")
+        merged_ls = pd.merge_asof(
+            df[["open_time"]].copy(),
+            ldf.rename(columns={"timestamp": "open_time"}),
+            on="open_time",
+            direction="backward",
+        )
+        df["ls_ratio"] = (merged_ls["long_short_ratio"].fillna(1.0) - 1.0).values
+    else:
+        df["ls_ratio"] = 0.0
+
     # ── Fill NaNs from warmup periods ─────────────────────────────────
     indicator_cols = [
         "return_1",
@@ -93,6 +158,9 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
         "vwap_dist",
         "ema_trend",
         "cvd_slope",
+        "funding_rate",
+        "oi_change",
+        "ls_ratio",
     ]
     df[indicator_cols] = df[indicator_cols].ffill().bfill().fillna(0.0)
 
@@ -111,8 +179,11 @@ INDICATOR_COLUMNS: list[str] = [
     "vwap_dist",
     "ema_trend",
     "cvd_slope",
+    "funding_rate",
+    "oi_change",
+    "ls_ratio",
 ]
-"""Names of the 11 indicator columns added by :func:`compute_indicators`."""
+"""Names of the 14 indicator columns added by :func:`compute_indicators`."""
 
 
 # ── Private helpers ───────────────────────────────────────────────────────

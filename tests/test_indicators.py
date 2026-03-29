@@ -125,8 +125,8 @@ class TestComputeIndicators:
             assert not result[col].isna().any()
 
     def test_indicator_count(self):
-        """Should have exactly 11 indicator columns."""
-        assert len(INDICATOR_COLUMNS) == 11
+        """Should have exactly 14 indicator columns."""
+        assert len(INDICATOR_COLUMNS) == 14
 
     def test_ema_trend_present_and_finite(self):
         df = _make_ohlcv(n=200)
@@ -156,3 +156,73 @@ class TestComputeIndicators:
         for col in ["return_1", "return_20"]:
             vals = result[col].values[60:]  # skip warmup
             assert np.abs(vals).max() < 0.5, f"{col} has unreasonably large values"
+
+
+# ---------------------------------------------------------------------------
+# Sentiment helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_funding_df(n: int = 200) -> pd.DataFrame:
+    """Create synthetic funding rate data at 8h intervals."""
+    n_funding = max(1, n // 96)
+    return pd.DataFrame({
+        "funding_time": pd.date_range("2025-01-01", periods=n_funding, freq="8h", tz="UTC"),
+        "funding_rate": np.random.default_rng(42).normal(0.0001, 0.0005, n_funding),
+    })
+
+
+def _make_oi_df(n: int = 200) -> pd.DataFrame:
+    """Create synthetic open interest data at 5m intervals."""
+    base_oi = 50000.0 + np.cumsum(np.random.default_rng(42).normal(0, 100, n))
+    return pd.DataFrame({
+        "timestamp": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
+        "sum_open_interest": np.maximum(base_oi, 1000.0),
+    })
+
+
+def _make_ls_ratio_df(n: int = 200) -> pd.DataFrame:
+    """Create synthetic long/short ratio data at 5m intervals."""
+    ratios = 1.0 + np.random.default_rng(42).normal(0, 0.3, n)
+    return pd.DataFrame({
+        "timestamp": pd.date_range("2025-01-01", periods=n, freq="5min", tz="UTC"),
+        "long_short_ratio": np.maximum(ratios, 0.1),
+    })
+
+
+class TestSentimentFeatures:
+    """Tests for sentiment features in compute_indicators()."""
+
+    def test_sentiment_columns_present(self):
+        df = _make_ohlcv(n=200)
+        funding_df = _make_funding_df(n=200)
+        oi_df = _make_oi_df(n=200)
+        ls_ratio_df = _make_ls_ratio_df(n=200)
+        result = compute_indicators(df, funding_df=funding_df, oi_df=oi_df, ls_ratio_df=ls_ratio_df)
+        for col in ["funding_rate", "oi_change", "ls_ratio"]:
+            assert col in result.columns, f"Missing column: {col}"
+
+    def test_sentiment_no_nans(self):
+        df = _make_ohlcv(n=200)
+        funding_df = _make_funding_df(n=200)
+        oi_df = _make_oi_df(n=200)
+        ls_ratio_df = _make_ls_ratio_df(n=200)
+        result = compute_indicators(df, funding_df=funding_df, oi_df=oi_df, ls_ratio_df=ls_ratio_df)
+        for col in ["funding_rate", "oi_change", "ls_ratio"]:
+            assert not result[col].isna().any(), f"NaN in {col}"
+
+    def test_graceful_degradation_no_sentiment(self):
+        """Without sentiment data, columns should be zeros."""
+        df = _make_ohlcv(n=200)
+        result = compute_indicators(df)
+        for col in ["funding_rate", "oi_change", "ls_ratio"]:
+            assert col in result.columns
+            assert (result[col] == 0.0).all(), f"{col} should be all zeros without data"
+
+    def test_oi_change_clipped(self):
+        df = _make_ohlcv(n=200)
+        oi_df = _make_oi_df(n=200)
+        result = compute_indicators(df, oi_df=oi_df)
+        vals = result["oi_change"].values
+        assert vals.min() >= -1.0 - 0.001
+        assert vals.max() <= 1.0 + 0.001

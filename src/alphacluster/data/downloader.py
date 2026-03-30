@@ -352,7 +352,7 @@ def download_open_interest(
     """
     import os
 
-    key = api_key or os.environ.get("COINALYZE_API_KEY", "")
+    key = api_key if api_key is not None else os.environ.get("COINALYZE_API_KEY", "")
     if not key:
         logger.warning("No Coinalyze API key — returning empty OI DataFrame")
         return pd.DataFrame(
@@ -428,7 +428,7 @@ def download_ls_ratio(
     """
     import os
 
-    key = api_key or os.environ.get("COINALYZE_API_KEY", "")
+    key = api_key if api_key is not None else os.environ.get("COINALYZE_API_KEY", "")
     if not key:
         logger.warning("No Coinalyze API key — returning empty L/S DataFrame")
         return pd.DataFrame(

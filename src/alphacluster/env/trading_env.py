@@ -464,7 +464,7 @@ class TradingEnv(gym.Env):
                 hold_time_bonus = min((self.account.time_in_position**0.5) / 5.0, 3.0)
                 position_reward = 0.4 * pos_scale * upnl_ratio * (1.0 + hold_time_bonus)
             else:
-                time_factor = 1.0 + self.account.time_in_position / 100.0
+                time_factor = 1.0 + self.account.time_in_position / 30.0
                 position_reward = 0.4 * pos_scale * upnl_ratio * time_factor
 
         # 5. TRADE COMPLETION REWARD (quadratic duration scaling)
@@ -472,17 +472,17 @@ class TradingEnv(gym.Env):
         if self._trade_just_completed:
             trade_pnl_ratio = self._last_trade_pnl / self.initial_balance
             if self._last_trade_pnl > 0:
-                duration_multiplier = min((self._last_trade_duration / 10.0) ** 2, 10.0)
+                duration_multiplier = min((self._last_trade_duration / 30.0) ** 2, 10.0)
                 completion_reward = 0.01 * trade_pnl_ratio * duration_multiplier
             elif self._last_trade_pnl < 0:
                 loser_duration_factor = min(10.0 / max(self._last_trade_duration, 1), 3.0)
                 completion_reward = -0.005 * abs(trade_pnl_ratio) * loser_duration_factor
 
-        # 6. CHURN PENALTY (quadratic, base=0.02, threshold=20)
+        # 6. CHURN PENALTY (quadratic, base=0.05, threshold=50)
         churn_penalty = 0.0
-        if self._trade_just_completed and self._last_trade_duration < 20:
-            fraction_remaining = 1.0 - self._last_trade_duration / 20.0
-            churn_penalty = 0.02 * fraction_remaining**2 * rc.get("churn_penalty_scale", 1.0)
+        if self._trade_just_completed and self._last_trade_duration < 50:
+            fraction_remaining = 1.0 - self._last_trade_duration / 50.0
+            churn_penalty = 0.05 * fraction_remaining**2 * rc.get("churn_penalty_scale", 1.0)
 
         # 7. QUADRATIC DRAWDOWN PENALTY
         drawdown = 0.0

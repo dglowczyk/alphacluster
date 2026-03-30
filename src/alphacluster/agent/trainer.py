@@ -152,7 +152,7 @@ class CurriculumCallback(BaseCallback):
         3: {
             "fee_scale": 2.0,
             "churn_penalty_scale": 2.0,
-            "opportunity_cost_scale": 1.0,
+            "opportunity_cost_scale": 0.3,
             "opportunity_cost_cap": 1.0,
             "opportunity_cost_threshold": 1.0,
             "drawdown_penalty_scale": 1.5,
@@ -161,7 +161,7 @@ class CurriculumCallback(BaseCallback):
         },
     }
 
-    _DEFAULT_ENT_COEFS: dict[int, float] = {1: 0.05, 2: 0.03, 3: 0.005}
+    _DEFAULT_ENT_COEFS: dict[int, float] = {1: 0.05, 2: 0.03, 3: 0.01}
 
     def __init__(
         self,

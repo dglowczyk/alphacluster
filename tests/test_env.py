@@ -1121,7 +1121,7 @@ class TestCurriculumCallback:
         cb = CurriculumCallback(config)
         phase_config = cb._get_phase_reward_config(1)
         assert phase_config["fee_scale"] == pytest.approx(0.5)
-        assert phase_config["opportunity_cost_scale"] == pytest.approx(0.3)
+        assert phase_config["opportunity_cost_scale"] == pytest.approx(0.5)  # 1.0 * 0.5
 
     def test_custom_base_scales_applied(self):
         """Custom base_reward_config should be multiplied by phase multipliers."""

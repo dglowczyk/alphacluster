@@ -34,14 +34,16 @@ _FUNDING_HOURS = (0, 8, 16)  # UTC hours at which funding is applied
 
 # Default reward configuration — can be overridden by CurriculumCallback
 DEFAULT_REWARD_CONFIG: dict[str, float] = {
-    "opportunity_cost_scale": 0.5,
-    "opportunity_cost_cap": 0.02,
-    "opportunity_cost_threshold": 0.002,
+    "opportunity_cost_scale": 1.0,
+    "opportunity_cost_cap": 0.03,
+    "opportunity_cost_threshold": 0.0015,
     "fee_scale": 1.0,
     "drawdown_penalty_scale": 1.0,
     "churn_penalty_scale": 1.0,
     "quality_scale": 1.0,
     "position_mgmt_scale": 1.0,
+    "inactivity_scale": 1.0,
+    "min_trades_target": 4,
 }
 
 
@@ -420,11 +422,12 @@ class TradingEnv(gym.Env):
         1. Asymmetric PnL reward (winners 1.5x)
         2. Fee penalty (scaled by fee_scale)
         3. Opportunity cost (market-driven penalty for being flat during trends)
-        4. Position management reward (sqrt ramp for winners, cut losers)
-        5. Trade completion reward (quadratic duration scaling)
-        6. Churn penalty (quadratic, base=0.02, threshold=20)
+        4. Position management reward (sqrt ramp for winners, capped at 1.5)
+        5. Trade completion reward (quadratic duration/15 scaling, cap=4)
+        6. Churn penalty (quadratic, base=0.05, threshold=15)
         7. Quadratic drawdown penalty
         8. Trade quality bonus (per-step profitability for winners)
+        9. Inactivity penalty (encourage min trade count per episode)
         """
         current_equity = self.account.equity
         equity_change = current_equity - self._prev_equity
@@ -455,33 +458,33 @@ class TradingEnv(gym.Env):
                     raw_penalty = price_change - opp_threshold
                     opportunity_penalty = min(raw_penalty, opp_cap) * rc["opportunity_cost_scale"]
 
-        # 4. POSITION MANAGEMENT REWARD (sqrt ramp for winners)
+        # 4. POSITION MANAGEMENT REWARD (sqrt ramp for winners, capped)
         position_reward = 0.0
         if self.account.position_side != "flat":
             upnl_ratio = self.account.unrealized_pnl / self.initial_balance
             pos_scale = rc.get("position_mgmt_scale", 1.0)
             if upnl_ratio > 0:
-                hold_time_bonus = min((self.account.time_in_position**0.5) / 5.0, 3.0)
+                hold_time_bonus = min((self.account.time_in_position**0.5) / 8.0, 1.5)
                 position_reward = 0.4 * pos_scale * upnl_ratio * (1.0 + hold_time_bonus)
             else:
-                time_factor = 1.0 + self.account.time_in_position / 30.0
+                time_factor = 1.0 + self.account.time_in_position / 20.0
                 position_reward = 0.4 * pos_scale * upnl_ratio * time_factor
 
-        # 5. TRADE COMPLETION REWARD (quadratic duration scaling)
+        # 5. TRADE COMPLETION REWARD (quadratic duration scaling, reduced cap)
         completion_reward = 0.0
         if self._trade_just_completed:
             trade_pnl_ratio = self._last_trade_pnl / self.initial_balance
             if self._last_trade_pnl > 0:
-                duration_multiplier = min((self._last_trade_duration / 30.0) ** 2, 10.0)
+                duration_multiplier = min((self._last_trade_duration / 15.0) ** 2, 4.0)
                 completion_reward = 0.01 * trade_pnl_ratio * duration_multiplier
             elif self._last_trade_pnl < 0:
                 loser_duration_factor = min(10.0 / max(self._last_trade_duration, 1), 3.0)
                 completion_reward = -0.005 * abs(trade_pnl_ratio) * loser_duration_factor
 
-        # 6. CHURN PENALTY (quadratic, base=0.05, threshold=50)
+        # 6. CHURN PENALTY (quadratic, base=0.05, threshold=15)
         churn_penalty = 0.0
-        if self._trade_just_completed and self._last_trade_duration < 50:
-            fraction_remaining = 1.0 - self._last_trade_duration / 50.0
+        if self._trade_just_completed and self._last_trade_duration < 15:
+            fraction_remaining = 1.0 - self._last_trade_duration / 15.0
             churn_penalty = 0.05 * fraction_remaining**2 * rc.get("churn_penalty_scale", 1.0)
 
         # 7. QUADRATIC DRAWDOWN PENALTY
@@ -498,6 +501,17 @@ class TradingEnv(gym.Env):
             )
             quality_bonus = min(20.0 * per_step_pnl, 0.02) * rc.get("quality_scale", 1.0)
 
+        # 9. INACTIVITY PENALTY (encourage minimum trade count)
+        inactivity_penalty = 0.0
+        min_trades = rc.get("min_trades_target", 4)
+        inactivity_scale = rc.get("inactivity_scale", 1.0)
+        episode_progress = self._step_count / self.episode_length
+        if episode_progress > 0.3:
+            expected_trades = min_trades * episode_progress
+            trade_deficit = max(0.0, expected_trades - self._n_completed_trades)
+            if trade_deficit > 0:
+                inactivity_penalty = 0.002 * trade_deficit * inactivity_scale
+
         reward = (
             pnl_reward
             - fee_penalty
@@ -507,6 +521,7 @@ class TradingEnv(gym.Env):
             - churn_penalty
             - dd_penalty
             + quality_bonus
+            - inactivity_penalty
         )
         return reward
 
